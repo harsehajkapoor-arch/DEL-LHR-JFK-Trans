@@ -138,6 +138,149 @@
       );
     };
 
+    /* ═══════════════ CLOUD SYNC — GitHub Gist ═══════════════
+       Data lives in a private GitHub Gist.
+       Works across ALL browsers, devices, incognito windows.
+    ══════════════════════════════════════════════════════════ */
+    const Cloud = {
+      cfg: () => { try { const v=localStorage.getItem('ct_cloud'); return v?JSON.parse(v):null; } catch { return null; } },
+      setCfg: (c) => { try { localStorage.setItem('ct_cloud', JSON.stringify(c)); } catch {} },
+      ok: () => { const c=Cloud.cfg(); return !!(c?.token && c?.gistId); },
+
+      async save(mawbs, bags, newMawbs, logs) {
+        const c = Cloud.cfg();
+        if (!c?.token || !c?.gistId) return { ok:false, err:"Not configured" };
+        try {
+          const r = await fetch(`https://api.github.com/gists/${c.gistId}`, {
+            method:"PATCH",
+            headers:{ "Authorization":`token ${c.token}`, "Content-Type":"application/json" },
+            body: JSON.stringify({ files:{ "cargotrack-pro-data.json":{ content: JSON.stringify({mawbs,bags,newMawbs,logs,savedAt:new Date().toISOString(),version:"2"}) } } })
+          });
+          if (!r.ok) { const e=await r.json(); return { ok:false, err:e.message||r.status }; }
+          return { ok:true };
+        } catch(e) { return { ok:false, err:e.message }; }
+      },
+
+      async load() {
+        const c = Cloud.cfg();
+        if (!c?.token || !c?.gistId) return null;
+        try {
+          const r = await fetch(`https://api.github.com/gists/${c.gistId}`, {
+            headers:{ "Authorization":`token ${c.token}` }
+          });
+          if (!r.ok) return null;
+          const g = await r.json();
+          const f = g.files?.["cargotrack-pro-data.json"];
+          if (!f?.content) return null;
+          return JSON.parse(f.content);
+        } catch { return null; }
+      },
+
+      async testConnection(token, gistId) {
+        try {
+          const r = await fetch(`https://api.github.com/gists/${gistId}`, {
+            headers:{ "Authorization":`token ${token}` }
+          });
+          if (r.ok) return { ok:true };
+          const e = await r.json();
+          return { ok:false, err:e.message||"Invalid token or Gist ID" };
+        } catch(e) { return { ok:false, err:e.message }; }
+      }
+    };
+
+    /* ═══ CLOUD SETUP MODAL ═══ */
+    const CloudSetupModal = ({ onClose, onSaved }) => {
+      const existing = Cloud.cfg();
+      const [token, setToken] = useState(existing?.token||"");
+      const [gistId, setGistId] = useState(existing?.gistId||"");
+      const [status, setStatus] = useState(null);
+      const [testing, setTesting] = useState(false);
+
+      const test = async () => {
+        if (!token.trim() || !gistId.trim()) { setStatus({ok:false,msg:"Enter both token and Gist ID"}); return; }
+        setTesting(true); setStatus({ok:null,msg:"Testing connection…"});
+        const r = await Cloud.testConnection(token.trim(), gistId.trim());
+        setTesting(false);
+        setStatus(r.ok ? {ok:true,msg:"✓ Connection successful!"} : {ok:false,msg:"✗ "+r.err});
+      };
+
+      const save = () => {
+        Cloud.setCfg({ token:token.trim(), gistId:gistId.trim() });
+        onSaved();
+        onClose();
+      };
+
+      const disconnect = () => { Cloud.setCfg(null); localStorage.removeItem('ct_cloud'); onClose(); };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.85)"}}>
+          <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl w-full shadow-2xl" style={{maxWidth:520}}>
+            <div className="flex items-center justify-between p-5 border-b border-[#1e2d4a]">
+              <div>
+                <h3 className="text-white font-bold text-lg">⛅ Cloud Sync Setup</h3>
+                <p className="text-slate-500 text-xs mt-0.5">Sync via GitHub Gist — works in any browser, incognito, any device</p>
+              </div>
+              <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-5">
+
+              {/* Step instructions */}
+              <div className="bg-[#080d1a] rounded-xl p-4 space-y-3 text-xs">
+                <p className="text-amber-400 font-semibold text-sm">One-time setup — 3 steps:</p>
+                <div className="space-y-2 text-slate-300">
+                  <p><span className="bg-amber-500 text-black rounded-full w-4 h-4 inline-flex items-center justify-center font-bold text-xs mr-2">1</span>
+                    Go to <a href="https://github.com/settings/tokens/new" target="_blank" className="text-blue-400 underline">github.com/settings/tokens/new</a>
+                    <br/><span className="ml-6 text-slate-500">→ Name it "CargoTrack" → check <strong className="text-white">gist</strong> scope → Generate token → copy it</span>
+                  </p>
+                  <p><span className="bg-amber-500 text-black rounded-full w-4 h-4 inline-flex items-center justify-center font-bold text-xs mr-2">2</span>
+                    Go to <a href="https://gist.github.com" target="_blank" className="text-blue-400 underline">gist.github.com</a>
+                    <br/><span className="ml-6 text-slate-500">→ Filename: <strong className="text-white">cargotrack-pro-data.json</strong> → content: <strong className="text-white">{"{}"}</strong> → <strong className="text-white">Create secret gist</strong></span>
+                    <br/><span className="ml-6 text-slate-500">→ Copy the Gist ID from the URL: gist.github.com/username/<strong className="text-amber-300">THIS_PART</strong></span>
+                  </p>
+                  <p><span className="bg-amber-500 text-black rounded-full w-4 h-4 inline-flex items-center justify-center font-bold text-xs mr-2">3</span>
+                    Paste both below and click <strong className="text-white">Save & Sync</strong></p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">GitHub Personal Access Token</label>
+                  <input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm mono"/>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Gist ID</label>
+                  <input type="text" value={gistId} onChange={e=>setGistId(e.target.value)} placeholder="abc123def456..."
+                    className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm mono"/>
+                </div>
+              </div>
+
+              {status && (
+                <div className={`p-3 rounded-xl text-sm ${status.ok===true?"bg-green-500/10 border border-green-500/30 text-green-300":status.ok===false?"bg-red-500/10 border border-red-500/30 text-red-400":"bg-slate-500/10 border border-slate-500/30 text-slate-300"}`}>
+                  {status.msg}
+                </div>
+              )}
+
+              <div className="flex gap-3 flex-wrap">
+                <button onClick={test} disabled={testing} className="rounded-lg font-medium px-4 py-2.5 text-sm bg-transparent border border-[#1e2d4a] hover:border-slate-500 text-slate-300 disabled:opacity-40">
+                  {testing?"Testing…":"Test Connection"}
+                </button>
+                <button onClick={save} disabled={!token||!gistId} className="rounded-lg font-medium px-4 py-2.5 text-sm bg-amber-500 hover:bg-amber-400 text-black disabled:opacity-40">
+                  ⛅ Save & Enable Cloud Sync
+                </button>
+                {existing?.token && (
+                  <button onClick={disconnect} className="rounded-lg font-medium px-4 py-2.5 text-sm bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25">
+                    Disconnect
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+
     /* ═══════════════ DATA BACKUP / RESTORE ═══════════════ */
     const exportData = (mawbs, bags, newMawbs, logs) => {
       const d = { mawbs, bags, newMawbs, logs, exportedAt: new Date().toISOString(), version: "2" };
@@ -374,7 +517,7 @@ const NAV = [
   { id:"logs",      icon:"🕐", label:"Activity Logs" },
 ];
 
-const Sidebar = ({ page, setPage, collapsed, user, onLogout, darkMode, setDarkMode, onExport, onImport }) => {
+const Sidebar = ({ page, setPage, collapsed, user, onLogout, darkMode, setDarkMode, onExport, onImport, onCloudSetup, cloudOk }) => {
   const bg = "bg-[#080d1a] border-r border-[#0f1828]";
   return (
     <div className={`${bg} flex flex-col h-screen transition-all duration-300 ${collapsed?"w-16":"w-60"} flex-shrink-0`}>
@@ -425,7 +568,7 @@ const Sidebar = ({ page, setPage, collapsed, user, onLogout, darkMode, setDarkMo
 };
 
 /* ─────────────────── TOPBAR ─────────────────── */
-const Topbar = ({ page, globalSearch, setGlobalSearch, collapsed, setCollapsed, bags, mawbs, newMawbs, setPage, setSelectedMawb, setSearchBag }) => {
+const Topbar = ({ page, globalSearch, setGlobalSearch, collapsed, setCollapsed, bags, mawbs, newMawbs, setPage, setSelectedMawb, setSearchBag, syncStatus }) => {
   const [focused, setFocused] = useState(false);
   const inputRef = useRef();
   const labels = { dashboard:"Dashboard", upload:"Upload Manifest", mawbs:"MAWB Management", pending:"Pending LHR Bags", assign:"Assign New MAWB", reports:"Reports & Exports", logs:"Activity Logs" };
@@ -516,8 +659,13 @@ const Topbar = ({ page, globalSearch, setGlobalSearch, collapsed, setCollapsed, 
           <span className="animate-pulse">⚠</span> <span className="hidden sm:inline">{pendingCount} overdue</span>
         </button>
       )}
-      {bags.length > 0 && (
-        <span className="flex-shrink-0 text-green-400 text-xs flex items-center gap-1 ml-1" title="Data saved permanently in this browser">
+      {syncStatus && (
+        <span className={`flex-shrink-0 text-xs px-2 py-1 rounded-lg flex items-center gap-1 ${syncStatus==="saving"?"text-amber-400 bg-amber-500/10 border border-amber-500/20":syncStatus==="saved"?"text-green-400 bg-green-500/10 border border-green-500/20":"text-red-400 bg-red-500/10 border border-red-500/20"}`}>
+          {syncStatus==="saving"?"⛅ Syncing…":syncStatus==="saved"?"⛅ Cloud Saved ✓":"⚠ Sync failed"}
+        </span>
+      )}
+      {!syncStatus && bags.length > 0 && (
+        <span className="flex-shrink-0 text-green-400 text-xs flex items-center gap-1 ml-1" title="Data saved">
           💾 <span className="hidden sm:inline mono">{bags.length} bags</span>
         </span>
       )}
@@ -1608,18 +1756,21 @@ const ActivityLogs = ({ logs }) => {
 };
 
 /* ─────────────────── MAIN LAYOUT ─────────────────── */
-const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activityLogs, addLog, currentUser, onLogout, darkMode, setDarkMode, onExportData, onImportData }) => {
+const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activityLogs, addLog, currentUser, onLogout, darkMode, setDarkMode, onExportData, onImportData, onCloudSave, onCloudSetup }) => {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
   const [selectedMawb, setSelectedMawb] = useState(null);
   const [searchBag, setSearchBag] = useState(null);
   const [showImport, setShowImport] = useState(false);
+  const [showCloudSetup, setShowCloudSetup] = useState(false);
+  const [cloudOk, setCloudOk] = useState(Cloud.ok());
+  const [syncStatus, setSyncStatus] = useState(null);
 
   return (
     <div className={`flex h-screen overflow-hidden ${darkMode?"bg-[#080d1a]":"bg-slate-100"}`} style={{fontFamily:"Outfit,sans-serif"}}>
       
-      <Sidebar page={page} setPage={p=>{setPage(p);if(p!=="mawbs")setSelectedMawb(null);}} collapsed={collapsed} user={currentUser} onLogout={onLogout} darkMode={darkMode} setDarkMode={setDarkMode} onExport={onExportData} onImport={()=>setShowImport(true)}/>
+      <Sidebar page={page} setPage={p=>{setPage(p);if(p!=="mawbs")setSelectedMawb(null);}} collapsed={collapsed} user={currentUser} onLogout={onLogout} darkMode={darkMode} setDarkMode={setDarkMode} onExport={onExportData} onImport={()=>setShowImport(true)} onCloudSetup={()=>setShowCloudSetup(true)} cloudOk={cloudOk}/>
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Topbar page={page} globalSearch={globalSearch} setGlobalSearch={setGlobalSearch} collapsed={collapsed} setCollapsed={setCollapsed}
           bags={bags} mawbs={mawbs} newMawbs={newMawbs} setPage={setPage} setSelectedMawb={setSelectedMawb} setSearchBag={setSearchBag}/>
@@ -1634,7 +1785,8 @@ const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activi
         </main>
       </div>
       {searchBag && <BagDetailModal bag={searchBag} mawbs={mawbs} newMawbs={newMawbs} onClose={()=>setSearchBag(null)}/>}
-      {showImport && <ImportModal onImport={onImportData} onClose={()=>setShowImport(false)}/>}
+      {showImport && <ImportModal onImport={d=>{onImportData(d);if(Cloud.ok()){setSyncStatus("saving");Cloud.save(d.mawbs||[],d.bags||[],d.newMawbs||[],d.logs||[]).then(r=>{setSyncStatus(r.ok?"saved":"error");setTimeout(()=>setSyncStatus(null),3000);});};}} onClose={()=>setShowImport(false)}/>}
+      {showCloudSetup && <CloudSetupModal onClose={()=>setShowCloudSetup(false)} onSaved={()=>{setCloudOk(true);setSyncStatus("saving");Cloud.save(mawbs,bags,newMawbs,activityLogs).then(r=>{setSyncStatus(r.ok?"saved":"error");setTimeout(()=>setSyncStatus(null),3000);});}}/>}
     </div>
   );
 };
@@ -1701,6 +1853,28 @@ function App() {
     LS.set("ct_mawbs",m); LS.set("ct_bags",b); LS.set("ct_newmawbs",n); LS.set("ct_logs",l);
   };
 
+  // Auto-save to cloud whenever data changes (debounced 2s)
+  const cloudSaveTimer = useRef(null);
+  const onCloudSave = useCallback((m,b,n,l) => {
+    if (!Cloud.ok()) return;
+    if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
+    cloudSaveTimer.current = setTimeout(() => { Cloud.save(m,b,n,l); }, 2000);
+  }, []);
+
+  useEffect(() => { onCloudSave(mawbs,bags,newMawbs,logs); }, [mawbs,bags,newMawbs,logs]);
+
+  // On first load: if cloud configured and localStorage empty, load from cloud
+  useEffect(() => {
+    if (!Cloud.ok()) return;
+    if (bags.length===0 && mawbs.length===0) {
+      Cloud.load().then(d => {
+        if (d?.bags?.length || d?.mawbs?.length) {
+          onImportData(d);
+        }
+      });
+    }
+  }, []);
+
   if (!auth) return <LoginPage onLogin={u => { setUser(u); setAuth(true); }} />;
 
   return (
@@ -1711,7 +1885,7 @@ function App() {
       activityLogs={logs} addLog={addLog}
       currentUser={user}  onLogout={() => setAuth(false)}
       darkMode={darkMode} setDarkMode={setDarkMode}
-      onExportData={onExportData} onImportData={onImportData}
+      onExportData={onExportData} onImportData={onImportData} onCloudSave={onCloudSave} onCloudSetup={()=>{}}
     />
   );
 }
