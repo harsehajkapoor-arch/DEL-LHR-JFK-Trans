@@ -1,0 +1,1697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CargoTrack Pro — DEL · LHR · JFK</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Outfit', sans-serif; box-sizing: border-box; }
+    body { margin: 0; background: #080d1a; }
+    .mono { font-family: 'JetBrains Mono', monospace !important; }
+    @keyframes pulse-anim { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .animate-pulse { animation: pulse-anim 2s ease-in-out infinite; }
+    select option { background: #0f1629; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0a0f1e; }
+    ::-webkit-scrollbar-thumb { background: #1e2d4a; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;color:#94a3b8;">
+      <div style="font-size:48px">✈</div>
+      <div style="font-size:20px;font-weight:700;color:white;">CargoTrack <span style="color:#f59e0b;">Pro</span></div>
+      <div style="font-size:13px;color:#64748b;">Loading — this may take 5-10 seconds on first load…</div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+    /* ═══════════════ SIMPLE SVG CHARTS (no CDN needed) ═══════════════ */
+
+    // Donut Pie Chart
+    const PieViz = ({ data, size=200 }) => {
+      const total = data.reduce((s,d)=>s+d.value,0);
+      if(!total) return <div style={{height:size,display:"flex",alignItems:"center",justifyContent:"center",color:"#475569",fontSize:13}}>No data</div>;
+      let angle = -Math.PI/2;
+      const cx=size/2, cy=size/2, r=size*0.35, ri=size*0.2;
+      const slices = data.map(d=>{
+        const a = (d.value/total)*2*Math.PI;
+        const x1=cx+r*Math.cos(angle), y1=cy+r*Math.sin(angle);
+        const x2=cx+r*Math.cos(angle+a), y2=cy+r*Math.sin(angle+a);
+        const xi1=cx+ri*Math.cos(angle+a), yi1=cy+ri*Math.sin(angle+a);
+        const xi2=cx+ri*Math.cos(angle), yi2=cy+ri*Math.sin(angle);
+        const large = a>Math.PI?1:0;
+        const path = `M${x1} ${y1} A${r} ${r} 0 ${large} 1 ${x2} ${y2} L${xi1} ${yi1} A${ri} ${ri} 0 ${large} 0 ${xi2} ${yi2} Z`;
+        const slice = {path, fill:d.fill, name:d.name, value:d.value, pct:Math.round(d.value/total*100)};
+        angle += a;
+        return slice;
+      });
+      const [hov,setHov] = useState(null);
+      return (
+        <div>
+          <svg width={size} height={size} style={{display:"block",margin:"0 auto"}}>
+            {slices.map((s,i)=>(
+              <path key={i} d={s.path} fill={s.fill} opacity={hov&&hov!==i?0.45:1}
+                onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)} style={{cursor:"pointer",transition:"opacity .15s"}}/>
+            ))}
+            {hov!=null&&<text x={cx} y={cy-6} textAnchor="middle" fill="#fff" fontSize={13} fontWeight="700">{slices[hov].pct}%</text>}
+            {hov!=null&&<text x={cx} y={cy+10} textAnchor="middle" fill="#94a3b8" fontSize={9}>{slices[hov].value}</text>}
+          </svg>
+          <div style={{display:"flex",flexWrap:"wrap",gap:"6px 12px",justifyContent:"center",marginTop:8}}>
+            {slices.map((s,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:"#94a3b8"}}>
+                <div style={{width:7,height:7,borderRadius:"50%",backgroundColor:s.fill,flexShrink:0}}/>
+                {s.name} <span style={{color:"#e2e8f0",fontWeight:600}}>{s.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // Vertical Bar Chart
+    const BarViz = ({ data, bars, xKey, height=180 }) => {
+      const maxVal = Math.max(1,...data.flatMap(d=>bars.map(b=>d[b.key]||0)));
+      const [hov,setHov] = useState(null);
+      return (
+        <div style={{height,display:"flex",flexDirection:"column"}}>
+          <div style={{flex:1,display:"flex",alignItems:"flex-end",gap:2,paddingBottom:20,position:"relative"}}>
+            {[0,Math.round(maxVal/2),maxVal].map(v=>(
+              <div key={v} style={{position:"absolute",left:0,right:0,bottom:`${20+((v/maxVal)*100)*((height-20)/height)}px`,borderTop:"1px solid #1e2d4a",display:"flex",alignItems:"center"}}>
+                <span style={{fontSize:8,color:"#475569",marginLeft:2}}>{v}</span>
+              </div>
+            ))}
+            {data.map((d,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",height:"100%",justifyContent:"flex-end",gap:1,position:"relative",zIndex:1}}
+                onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)}>
+                <div style={{display:"flex",alignItems:"flex-end",gap:1,width:"100%",justifyContent:"center"}}>
+                  {bars.map(b=>(
+                    <div key={b.key} style={{flex:1,maxWidth:16,backgroundColor:b.fill,height:`${(d[b.key]||0)/maxVal*(height-24)}px`,borderRadius:"2px 2px 0 0",transition:"all .2s",opacity:hov!=null&&hov!==i?0.5:1,minHeight:d[b.key]>0?2:0}}
+                      title={`${b.name}: ${d[b.key]||0}`}/>
+                  ))}
+                </div>
+                <div style={{fontSize:8,color:"#64748b",textAlign:"center",width:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d[xKey]}</div>
+                {hov===i&&(
+                  <div style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",background:"#0f1629",border:"1px solid #1e2d4a",borderRadius:6,padding:"4px 8px",whiteSpace:"nowrap",zIndex:10,marginBottom:4}}>
+                    <div style={{fontSize:10,color:"#e2e8f0",fontWeight:600}}>{d.fullMawb||d[xKey]}</div>
+                    {bars.map(b=><div key={b.key} style={{fontSize:9,color:"#94a3b8"}}><span style={{color:b.fill,marginRight:4}}>●</span>{b.name}: {d[b.key]||0}</div>)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+            {bars.map(b=><div key={b.key} style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#94a3b8"}}><div style={{width:7,height:7,borderRadius:"50%",backgroundColor:b.fill}}/>{b.name}</div>)}
+          </div>
+        </div>
+      );
+    };
+
+    // Horizontal Bar Chart
+    const HBarViz = ({ data, valueKey, labelKey, height=160 }) => {
+      const maxVal = Math.max(1,...data.map(d=>d[valueKey]||0));
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:6,height,justifyContent:"center"}}>
+          {data.map((d,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{width:32,fontSize:10,color:"#94a3b8",textAlign:"right",flexShrink:0}}>{d[labelKey]}</div>
+              <div style={{flex:1,height:18,backgroundColor:"#1e2d4a",borderRadius:3,overflow:"hidden"}}>
+                <div style={{height:"100%",width:`${(d[valueKey]||0)/maxVal*100}%`,backgroundColor:d.fill||"#f59e0b",borderRadius:3,transition:"width .3s",display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:4}}>
+                  {(d[valueKey]||0)>0&&<span style={{fontSize:9,color:"rgba(0,0,0,0.7)",fontWeight:700}}>{d[valueKey]}</span>}
+                </div>
+              </div>
+              <div style={{width:20,fontSize:10,color:"#e2e8f0",fontWeight:600,flexShrink:0}}>{d[valueKey]||0}</div>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    /* ═══════════════ DATA BACKUP / RESTORE ═══════════════ */
+    const exportData = (mawbs, bags, newMawbs, logs) => {
+      const d = { mawbs, bags, newMawbs, logs, exportedAt: new Date().toISOString(), version: "2" };
+      const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `cargotrack-backup-${new Date().toISOString().split("T")[0]}.json`;
+      a.click();
+    };
+
+    const ImportModal = ({ onImport, onClose }) => {
+      const [text, setText] = useState("");
+      const [err, setErr] = useState("");
+      const fileRef = useRef();
+      const handleFile = e => {
+        const f = e.target.files[0]; if (!f) return;
+        const r = new FileReader(); r.onload = ev => setText(ev.target.result); r.readAsText(f);
+      };
+      const doImport = () => {
+        try {
+          const d = JSON.parse(text);
+          if (!d.bags || !d.mawbs) throw new Error("Invalid file");
+          onImport(d); onClose();
+        } catch { setErr("Invalid JSON — please select a valid CargoTrack backup file."); }
+      };
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.85)"}}>
+          <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-[#1e2d4a]">
+              <div>
+                <h3 className="text-white font-semibold text-lg">📥 Import Backup Data</h3>
+                <p className="text-slate-500 text-xs mt-0.5">Restore from a cargotrack-backup.json file</p>
+              </div>
+              <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {err && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm">{err}</div>}
+              <div className="border-2 border-dashed border-[#1e2d4a] rounded-xl p-8 text-center cursor-pointer hover:border-amber-500/40 transition-all" onClick={() => fileRef.current.click()}>
+                <input ref={fileRef} type="file" accept=".json" onChange={handleFile} className="hidden"/>
+                <div className="text-4xl mb-3">📂</div>
+                <p className="text-white font-medium">Click to select backup file</p>
+                <p className="text-slate-500 text-xs mt-1">cargotrack-backup-YYYY-MM-DD.json</p>
+              </div>
+              {text && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-300 text-sm">✓ File loaded · Click Import to restore all data</div>}
+              <div className="flex gap-3">
+                <button onClick={doImport} disabled={!text} className="rounded-lg font-medium transition-all disabled:opacity-40 px-4 py-2.5 text-sm bg-amber-500 hover:bg-amber-400 text-black">📥 Import & Restore All Data</button>
+                <button onClick={onClose} className="rounded-lg font-medium transition-all px-4 py-2.5 text-sm bg-transparent border border-[#1e2d4a] hover:border-slate-500 text-slate-300">Cancel</button>
+              </div>
+              <p className="text-slate-600 text-xs">⚠ This replaces all current data with the backup.</p>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+
+/* ─────────────────── FONTS ─────────────────── */
+
+
+/* ─────────────────── HELPERS ─────────────────── */
+const today = new Date();
+const daysAgo = n => { const d = new Date(today); d.setDate(d.getDate() - n); return d.toISOString().split("T")[0]; };
+const genId = () => `${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+const daysSince = d => d ? Math.max(0, Math.floor((Date.now() - new Date(d)) / 86400000)) : 0;
+const fmtDate = d => d ? new Date(d).toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"numeric" }) : "—";
+const fmtDT = d => d ? new Date(d).toLocaleString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" }) : "—";
+const classifyBag = n => n.toUpperCase().startsWith("MB") ? "USA" : n.startsWith("8") ? "LHR" : "UNKNOWN";
+
+/* ─────────────────── INITIAL DATA (empty — add your own via Upload Manifest) ─────────────────── */
+const MAWBS_INIT    = [];
+const BAGS_INIT     = [];
+const NEWMAWBS_INIT = [];
+const LOGS_INIT     = [];
+
+/* ─────────────────── STATUS CONFIG ─────────────────── */
+const STATUS_TW = {
+  "In Transit":        "bg-blue-500/15 text-blue-300 border border-blue-500/30",
+  "Arrived LHR":       "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
+  "Pending at LHR":    "bg-amber-500/15 text-amber-300 border border-amber-500/30",
+  "Assigned New MAWB": "bg-purple-500/15 text-purple-300 border border-purple-500/30",
+  "Flown to JFK":      "bg-green-500/15 text-green-300 border border-green-500/30",
+  "Delivered":         "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30",
+};
+const STATUS_LIGHT = {
+  "In Transit":        "bg-blue-50 text-blue-700 border border-blue-200",
+  "Arrived LHR":       "bg-indigo-50 text-indigo-700 border border-indigo-200",
+  "Pending at LHR":    "bg-amber-50 text-amber-700 border border-amber-200",
+  "Assigned New MAWB": "bg-purple-50 text-purple-700 border border-purple-200",
+  "Flown to JFK":      "bg-green-50 text-green-700 border border-green-200",
+  "Delivered":         "bg-emerald-50 text-emerald-700 border border-emerald-200",
+};
+
+/* ─────────────────── SHARED MICRO COMPONENTS ─────────────────── */
+const Sb = ({ status, dark=true }) => (
+  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${dark ? (STATUS_TW[status]||"bg-slate-500/15 text-slate-400 border border-slate-500/30") : (STATUS_LIGHT[status]||"bg-slate-100 text-slate-600 border border-slate-200")}`}>
+    {status}
+  </span>
+);
+
+const DestBadge = ({ type, dark=true }) => (
+  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${type==="LHR" ? (dark?"bg-sky-500/20 text-sky-300":"bg-sky-50 text-sky-700") : (dark?"bg-rose-500/20 text-rose-300":"bg-rose-50 text-rose-700")}`}>
+    {type==="LHR" ? "🇬🇧 LHR" : "🇺🇸 USA"}
+  </span>
+);
+
+const Modal = ({ title, onClose, children, wide }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.7)"}}>
+    <div className={`bg-[#0f1629] border border-[#1e2d4a] rounded-2xl w-full ${wide?"max-w-3xl":"max-w-lg"} max-h-[90vh] overflow-y-auto`}>
+      <div className="flex items-center justify-between p-5 border-b border-[#1e2d4a]">
+        <h3 className="text-white font-semibold text-lg">{title}</h3>
+        <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  </div>
+);
+
+const Input = ({ label, ...props }) => (
+  <div>
+    {label && <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">{label}</label>}
+    <input className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-colors" {...props} />
+  </div>
+);
+
+const Select = ({ label, options, ...props }) => (
+  <div>
+    {label && <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">{label}</label>}
+    <select className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-amber-500/50 text-sm transition-colors">
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  </div>
+);
+
+const Btn = ({ children, variant="amber", size="sm", onClick, disabled, className="" }) => {
+  const base = `rounded-lg font-medium transition-all disabled:opacity-40 ${size==="sm"?"px-3 py-1.5 text-sm":"px-4 py-2.5 text-sm"} ${className}`;
+  const vars = {
+    amber:  "bg-amber-500 hover:bg-amber-400 text-black",
+    ghost:  "bg-transparent border border-[#1e2d4a] hover:border-slate-500 text-slate-300 hover:text-white",
+    danger: "bg-red-500/15 border border-red-500/30 hover:bg-red-500/25 text-red-400",
+    green:  "bg-green-500/15 border border-green-500/30 hover:bg-green-500/25 text-green-400",
+  };
+  return <button onClick={onClick} disabled={disabled} className={`${base} ${vars[variant]}`}>{children}</button>;
+};
+
+const EmptyState = ({ icon, title, sub }) => (
+  <div className="flex flex-col items-center justify-center py-20 text-center">
+    <div className="text-5xl mb-4 opacity-20">{icon}</div>
+    <p className="text-slate-400 font-medium">{title}</p>
+    {sub && <p className="text-slate-600 text-sm mt-1">{sub}</p>}
+  </div>
+);
+
+/* ─────────────────── PAGINATION ─────────────────── */
+const usePaginate = (data, perPage=10) => {
+  const [page, setPage] = useState(1);
+  const total = Math.max(1, Math.ceil(data.length / perPage));
+  const slice = data.slice((page-1)*perPage, page*perPage);
+  const reset = useCallback(() => setPage(1), []);
+  return { page, setPage, total, slice, reset };
+};
+
+const Pagination = ({ page, total, setPage }) => {
+  if (total <= 1) return null;
+  return (
+    <div className="flex items-center justify-end gap-2 pt-4">
+      <Btn variant="ghost" disabled={page===1} onClick={()=>setPage(p=>p-1)}>← Prev</Btn>
+      <span className="text-slate-400 text-sm">Page {page} / {total}</span>
+      <Btn variant="ghost" disabled={page===total} onClick={()=>setPage(p=>p+1)}>Next →</Btn>
+    </div>
+  );
+};
+
+/* ─────────────────── LOGIN PAGE ─────────────────── */
+const LoginPage = ({ onLogin }) => {
+  const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
+  const handle = () => {
+    setLoading(true); setErr("");
+    setTimeout(() => {
+      if ((u==="admin"&&p==="admin123")||(u==="ops"&&p==="ops123")) onLogin({ username:u, role:u==="admin"?"Administrator":"Operations" });
+      else { setErr("Invalid credentials. Use admin / admin123"); setLoading(false); }
+    }, 700);
+  };
+  return (
+    <div className="min-h-screen bg-[#060b17] flex items-center justify-center p-4 relative overflow-hidden" style={{fontFamily:"Outfit,sans-serif"}}>
+      
+      <div className="absolute inset-0 opacity-[0.025]" style={{backgroundImage:"linear-gradient(#f59e0b 1px,transparent 1px),linear-gradient(90deg,#f59e0b 1px,transparent 1px)",backgroundSize:"40px 40px"}}/>
+      <div className="absolute top-20 left-1/4 w-96 h-96 rounded-full opacity-5" style={{background:"radial-gradient(circle,#f59e0b,transparent)"}}/>
+      <div className="relative w-full max-w-md z-10">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4" style={{background:"linear-gradient(135deg,#1a2d55,#0f1629)",border:"1px solid #1e2d4a"}}>
+            <span className="text-4xl">✈</span>
+          </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight">CargoTrack <span className="text-amber-400">Pro</span></h1>
+          <p className="text-slate-500 text-sm mt-2">DEL · LHR · JFK Air Cargo Management Platform</p>
+          <div className="flex items-center justify-center gap-2 mt-3">
+            {["🇮🇳 Delhi","✈","🇬🇧 London","✈","🇺🇸 New York"].map((s,i) => <span key={i} className="text-xs text-slate-600">{s}</span>)}
+          </div>
+        </div>
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-8 shadow-2xl">
+          <h2 className="text-lg font-semibold text-white mb-6">Sign in to continue</h2>
+          {err && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 mb-5 text-red-400 text-sm">{err}</div>}
+          <div className="space-y-4">
+            <Input label="Username" type="text" value={u} onChange={e=>setU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="admin" />
+            <Input label="Password" type="password" value={p} onChange={e=>setP(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="••••••••" />
+          </div>
+          <button onClick={handle} disabled={loading} className="w-full mt-6 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-sm transition-all">
+            {loading ? "Authenticating…" : "Sign In  →"}
+          </button>
+          <p className="text-center text-slate-600 text-xs mt-5">Demo credentials: <span className="text-slate-400 mono">admin / admin123</span></p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─────────────────── SIDEBAR ─────────────────── */
+const NAV = [
+  { id:"dashboard", icon:"📊", label:"Dashboard" },
+  { id:"upload",    icon:"📤", label:"Upload Manifest" },
+  { id:"mawbs",     icon:"📋", label:"MAWB Management" },
+  { id:"pending",   icon:"⏳", label:"Pending LHR Bags" },
+  { id:"assign",    icon:"🏷", label:"Assign New MAWB" },
+  { id:"reports",   icon:"📈", label:"Reports" },
+  { id:"logs",      icon:"🕐", label:"Activity Logs" },
+];
+
+const Sidebar = ({ page, setPage, collapsed, user, onLogout, darkMode, setDarkMode, onExport, onImport }) => {
+  const bg = "bg-[#080d1a] border-r border-[#0f1828]";
+  return (
+    <div className={`${bg} flex flex-col h-screen transition-all duration-300 ${collapsed?"w-16":"w-60"} flex-shrink-0`}>
+      <div className="p-4 border-b border-[#0f1828] flex items-center gap-3">
+        <div className="flex-shrink-0 w-8 h-8 bg-amber-500/20 border border-amber-500/30 rounded-lg flex items-center justify-center text-lg">✈</div>
+        {!collapsed && <div><p className="text-white font-bold text-sm leading-tight">CargoTrack</p><p className="text-amber-400 text-xs font-semibold">Pro</p></div>}
+      </div>
+      <nav className="flex-1 py-4 space-y-0.5 px-2 overflow-y-auto">
+        {NAV.map(n => (
+          <button key={n.id} onClick={()=>setPage(n.id)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left ${page===n.id?"bg-amber-500/15 border border-amber-500/25 text-amber-300":"text-slate-500 hover:text-slate-300 hover:bg-[#0f1629]"}`}>
+            <span className="text-base flex-shrink-0">{n.icon}</span>
+            {!collapsed && <span className="text-sm font-medium truncate">{n.label}</span>}
+          </button>
+        ))}
+      </nav>
+      <div className="p-3 border-t border-[#0f1828] space-y-2">
+        <button onClick={onExport} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-green-400 hover:bg-green-500/10 transition-all">
+          <span className="text-base">💾</span>
+          {!collapsed && <span className="text-xs font-medium">Export Backup</span>}
+        </button>
+        <button onClick={onImport} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-blue-400 hover:bg-blue-500/10 transition-all">
+          <span className="text-base">📥</span>
+          {!collapsed && <span className="text-xs font-medium">Import Data</span>}
+        </button>
+        <button onClick={()=>setDarkMode(d=>!d)}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-slate-500 hover:text-slate-300 hover:bg-[#0f1629] transition-all">
+          <span className="text-base">{darkMode?"☀️":"🌙"}</span>
+          {!collapsed && <span className="text-sm">{darkMode?"Light Mode":"Dark Mode"}</span>}
+        </button>
+        {!collapsed && (
+          <div className="flex items-center gap-2 px-3 py-2">
+            <div className="w-7 h-7 bg-amber-500/20 rounded-full flex items-center justify-center text-xs text-amber-400 font-bold flex-shrink-0">
+              {user?.username?.[0]?.toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-xs font-medium truncate">{user?.username}</p>
+              <p className="text-slate-500 text-xs truncate">{user?.role}</p>
+            </div>
+            <button onClick={onExport} className="text-green-400 hover:text-green-300 text-sm" title="Export backup">💾</button>
+            <button onClick={onImport} className="text-blue-400 hover:text-blue-300 text-sm" title="Import backup">📥</button>
+            <button onClick={onLogout} className="text-slate-600 hover:text-red-400 text-sm" title="Logout">⏏</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ─────────────────── TOPBAR ─────────────────── */
+const Topbar = ({ page, globalSearch, setGlobalSearch, collapsed, setCollapsed, bags, mawbs, newMawbs, setPage, setSelectedMawb, setSearchBag }) => {
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef();
+  const labels = { dashboard:"Dashboard", upload:"Upload Manifest", mawbs:"MAWB Management", pending:"Pending LHR Bags", assign:"Assign New MAWB", reports:"Reports & Exports", logs:"Activity Logs" };
+  const pendingCount = bags.filter(b=>b.status==="Pending at LHR"&&b.destinationType==="USA"&&daysSince(b.arrivalDate)>3).length;
+
+  const results = useMemo(()=>{
+    const q = (globalSearch||"").trim();
+    if (q.length < 1) return [];
+    const qu = q.toUpperCase();
+    const br = bags.filter(b=>b.bagNumber.toUpperCase().includes(qu));
+    const mr = mawbs.filter(m=>m.mawbNumber.replace(/-/g,"").toUpperCase().includes(qu.replace(/-/g,""))||m.airline.toUpperCase().includes(qu));
+    const nr = (newMawbs||[]).filter(n=>n.mawbNumber.replace(/-/g,"").toUpperCase().includes(qu.replace(/-/g,"")));
+    return [
+      ...br.slice(0,6).map(b=>({ type:"bag",  label:b.bagNumber, sub:`${b.status} · ${b.destinationType==="USA"?"USA Transit":"LHR Delivery"}`, id:b.id, extra:mawbs.find(m=>m.id===b.originalMawbId)?.mawbNumber||"" })),
+      ...mr.slice(0,3).map(m=>({ type:"mawb", label:m.mawbNumber, sub:`${m.airline} · Arrived ${fmtDate(m.arrivalDate)}`, id:m.id })),
+      ...nr.slice(0,2).map(n=>({ type:"newmawb", label:n.mawbNumber, sub:`LHR→JFK · ${n.airline} · ${fmtDate(n.flightDate)}`, id:n.id, origId:n.originalMawbId })),
+    ];
+  },[globalSearch, bags, mawbs, newMawbs]);
+
+  const showDropdown = focused && globalSearch.length >= 1;
+
+  const handleSelect = r => {
+    setGlobalSearch("");
+    setFocused(false);
+    inputRef.current?.blur();
+    if (r.type==="bag") {
+      const b = bags.find(x=>x.id===r.id);
+      if (b) setSearchBag(b);
+    } else if (r.type==="mawb") {
+      setSelectedMawb(r.id); setPage("mawbs");
+    } else if (r.type==="newmawb") {
+      setSelectedMawb(r.origId); setPage("mawbs");
+    }
+  };
+
+  return (
+    <div className="h-14 bg-[#0a0f1e] border-b border-[#0f1828] flex items-center gap-4 px-4 flex-shrink-0 relative z-40">
+      <button onClick={()=>setCollapsed(c=>!c)} className="text-slate-500 hover:text-slate-300 text-lg w-8 h-8 flex items-center justify-center flex-shrink-0">☰</button>
+      <div className="font-semibold text-white text-sm flex-shrink-0 hidden sm:block">{labels[page]||page}</div>
+
+      {/* Search */}
+      <div className="flex-1 relative max-w-lg">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm pointer-events-none">🔍</span>
+        <input ref={inputRef}
+          value={globalSearch}
+          onChange={e=>setGlobalSearch(e.target.value)}
+          onFocus={()=>setFocused(true)}
+          onBlur={()=>setTimeout(()=>setFocused(false), 220)}
+          placeholder="Search bag number, MAWB, airline…"
+          className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-xl pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40 transition-colors"/>
+
+        {showDropdown && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-[#0f1629] border border-[#1e2d4a] rounded-xl overflow-hidden shadow-2xl">
+            {results.length === 0 ? (
+              <div className="px-4 py-5 text-center text-slate-500 text-sm">No results for "<span className="text-slate-300">{globalSearch}</span>"</div>
+            ) : (
+              <>
+                {["bag","mawb","newmawb"].map(type => {
+                  const group = results.filter(r=>r.type===type);
+                  if (!group.length) return null;
+                  const groupLabel = type==="bag"?"Bags":type==="mawb"?"Original MAWBs (DEL→LHR)":"New MAWBs (LHR→JFK)";
+                  return (
+                    <div key={type}>
+                      <div className="px-3 py-1.5 bg-[#080d1a] text-xs text-slate-500 uppercase tracking-wider font-medium">{groupLabel}</div>
+                      {group.map(r=>(
+                        <button key={r.id} onMouseDown={()=>handleSelect(r)}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#1a2644] text-left transition-colors border-t border-[#0f1628]">
+                          <span className="text-base flex-shrink-0">{type==="bag"?"📦":type==="mawb"?"📋":"🏷"}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white text-sm font-semibold mono">{r.label}</p>
+                            <p className="text-slate-500 text-xs truncate">{r.sub}{r.extra?` · MAWB: ${r.extra}`:""}</p>
+                          </div>
+                          <span className="text-slate-600 text-xs flex-shrink-0">↵</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
+                <div className="px-4 py-2 bg-[#080d1a] text-xs text-slate-600 border-t border-[#0f1628]">{results.length} result{results.length!==1?"s":""} found</div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {pendingCount > 0 && (
+        <button onClick={()=>setPage("pending")} className="flex-shrink-0 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-all">
+          <span className="animate-pulse">⚠</span> <span className="hidden sm:inline">{pendingCount} overdue</span>
+        </button>
+      )}
+    </div>
+  );
+};
+
+/* ─────────────────── BAG DETAIL MODAL ─────────────────── */
+const BagDetailModal = ({ bag, mawbs, newMawbs, onClose }) => {
+  if (!bag) return null;
+  const origM = mawbs.find(m=>m.id===bag.originalMawbId);
+  const nm    = newMawbs.find(n=>n.id===bag.newMawbId);
+  const days  = daysSince(bag.arrivalDate);
+  const overdue = bag.status==="Pending at LHR"&&days>3;
+  const rows = [
+    ["Bag Number",      bag.bagNumber, true],
+    ["Destination",     bag.destinationType==="USA"?"🇺🇸 USA Transit":"🇬🇧 LHR Delivery"],
+    ["Current Status",  <Sb status={bag.status}/>],
+    ["Original MAWB",   origM?.mawbNumber||"—", true],
+    ["Airline (DEL→LHR)", origM?.airline||"—"],
+    ["Flight (DEL→LHR)", origM?.flightNumber||"—"],
+    ["Arrived LHR",     fmtDate(bag.arrivalDate)],
+    ["Days in LHR",     `${days} day${days!==1?"s":""}${overdue?" ⚠ OVERDUE":""}`, false, overdue?"text-amber-400 font-bold":""],
+    ["New MAWB (LHR→JFK)", nm?.mawbNumber||"—", nm],
+    ["LHR→JFK Airline", nm?.airline||"—"],
+    ["LHR→JFK Flight",  nm?.flightNumber||"—"],
+    ["LHR→JFK Date",    fmtDate(nm?.flightDate)],
+    ["Remarks",         bag.remarks||"None"],
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.75)"}}>
+      <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-[#1e2d4a]">
+          <div>
+            <p className="text-xs text-slate-500 uppercase tracking-wider mb-0.5">Bag Detail</p>
+            <h3 className="text-white font-bold text-xl mono">{bag.bagNumber}</h3>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+        </div>
+        <div className="p-5 space-y-1">
+          {rows.map(([label, val, mono, extra])=>(
+            <div key={label} className="flex items-center justify-between py-2 border-b border-[#0f1628] last:border-0">
+              <span className="text-slate-500 text-xs uppercase tracking-wider">{label}</span>
+              <span className={`text-sm font-medium ${mono?"mono":""} ${extra||"text-slate-200"}`}>{val}</span>
+            </div>
+          ))}
+        </div>
+        {overdue && (
+          <div className="mx-5 mb-5 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs">
+            ⚠ This bag has been pending at LHR for {days} days. Assign a new MAWB immediately.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ─────────────────── DASHBOARD ─────────────────── */
+const Dashboard = ({ mawbs, bags, newMawbs, setPage, setSearchBag }) => {
+  const [drillDown, setDrillDown] = useState(null);
+  const [chartDrill, setChartDrill] = useState(null);
+
+  const pendingLHR   = bags.filter(b=>b.status==="Pending at LHR"&&b.destinationType==="USA").length;
+  const flownJFK     = bags.filter(b=>b.status==="Flown to JFK").length;
+  const deliveredLHR = bags.filter(b=>b.status==="Delivered"&&b.destinationType==="LHR").length;
+  const activeMawbs  = mawbs.filter(m=>m.status==="active").length;
+  const overdueCount = bags.filter(b=>b.status==="Pending at LHR"&&daysSince(b.arrivalDate)>3).length;
+
+  const getDrillBags = id => {
+    if (id==="pending")   return bags.filter(b=>b.status==="Pending at LHR"&&b.destinationType==="USA");
+    if (id==="flown")     return bags.filter(b=>b.status==="Flown to JFK");
+    if (id==="delivered") return bags.filter(b=>b.status==="Delivered"&&b.destinationType==="LHR");
+    if (id==="overdue")   return bags.filter(b=>b.status==="Pending at LHR"&&daysSince(b.arrivalDate)>3);
+    return null;
+  };
+
+  const statusData = [
+    { name:"Pending LHR",  value:pendingLHR,                                             fill:"#f59e0b", id:"pending" },
+    { name:"Flown to JFK", value:flownJFK,                                               fill:"#22c55e", id:"flown" },
+    { name:"Delivered",    value:deliveredLHR,                                           fill:"#10b981", id:"delivered" },
+    { name:"Arrived LHR",  value:bags.filter(b=>b.status==="Arrived LHR").length,        fill:"#6366f1", id:"arrived" },
+    { name:"In Transit",   value:bags.filter(b=>b.status==="In Transit").length,          fill:"#3b82f6", id:"transit" },
+  ].filter(d=>d.value>0);
+
+  const mawbBarData = mawbs.map(m=>{
+    const mb=bags.filter(b=>b.originalMawbId===m.id&&b.destinationType==="USA");
+    return { name:m.mawbNumber.slice(-6), fullMawb:m.mawbNumber, id:m.id, pending:mb.filter(b=>b.status==="Pending at LHR").length, flown:mb.filter(b=>b.status==="Flown to JFK").length, total:mb.length };
+  });
+
+  const agingBuckets = [
+    { label:"0–1d", min:0, max:1, fill:"#22c55e" },
+    { label:"2–3d", min:2, max:3, fill:"#f59e0b" },
+    { label:"4–7d", min:4, max:7, fill:"#f97316" },
+    { label:">7d",  min:8, max:999, fill:"#ef4444" },
+  ].map(b=>({ ...b, count:bags.filter(x=>x.status==="Pending at LHR"&&daysSince(x.arrivalDate)>=b.min&&daysSince(x.arrivalDate)<=b.max).length }));
+
+  const airlineData = useMemo(()=>{
+    const map = {};
+    newMawbs.forEach(n=>{ map[n.airline]=(map[n.airline]||0)+n.bagIds.length; });
+    return Object.entries(map).map(([name,bags])=>({name,bags})).sort((a,b)=>b.bags-a.bags).slice(0,5);
+  },[newMawbs]);
+
+  const stats = [
+    { id:"active_mawbs", label:"Active MAWBs",     value:activeMawbs,    icon:"📋", color:"text-blue-400",    sub:`of ${mawbs.length} total` },
+    { id:"pending",      label:"Pending in LHR",   value:pendingLHR,     icon:"⏳", color:"text-amber-400",   sub:"MB bags waiting",   alert:pendingLHR>0 },
+    { id:"flown",        label:"Flown to JFK",      value:flownJFK,       icon:"🛫", color:"text-green-400",   sub:"Forwarded" },
+    { id:"delivered",    label:"LHR Delivered",     value:deliveredLHR,   icon:"✅", color:"text-emerald-400", sub:"Local bags done" },
+    { id:"overdue",      label:"Overdue >3 days",   value:overdueCount,   icon:"⚠",  color:"text-red-400",     sub:"Need immediate action", alert:overdueCount>0 },
+    { id:"new_mawbs",    label:"New MAWBs Issued",  value:newMawbs.length,icon:"🏷", color:"text-purple-400",  sub:"LHR→JFK" },
+    { id:"total_bags",   label:"Total Bags",        value:bags.length,    icon:"📦", color:"text-slate-300",   sub:"All tracked bags" },
+  ];
+
+  const activeStat = stats.find(s=>s.id===drillDown?.id);
+  const drillBags  = drillDown ? getDrillBags(drillDown.id) : null;
+
+  return (
+    <div className="space-y-5">
+      {overdueCount > 0 && (
+        <div className="bg-amber-500/8 border border-amber-500/30 rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:bg-amber-500/12 transition-all" onClick={()=>setDrillDown(stats.find(s=>s.id==="overdue"))}>
+          <span className="text-amber-400 text-xl animate-pulse">⚠</span>
+          <div className="flex-1">
+            <p className="text-amber-300 font-semibold text-sm">{overdueCount} bag{overdueCount!==1?"s":""} overdue — pending LHR for more than 3 days · Click to view</p>
+          </div>
+          <Btn onClick={e=>{e.stopPropagation();setPage("assign");}}>Assign MAWB →</Btn>
+        </div>
+      )}
+
+      {/* STAT CARDS */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {stats.map(s=>{
+          const active=drillDown?.id===s.id;
+          return (
+            <button key={s.id} onClick={()=>setDrillDown(active?null:s)}
+              className={`relative overflow-hidden rounded-xl border p-3 text-left transition-all group
+                ${active?"border-amber-500/60 bg-amber-500/10 ring-1 ring-amber-500/30"
+                  :s.alert?"border-amber-500/40 bg-amber-500/5 hover:border-amber-500/60"
+                  :"border-[#1e2d4a] bg-[#0f1629] hover:border-slate-600 hover:bg-[#1a2644]"}`}>
+              {s.alert&&!active&&<div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-amber-400 animate-pulse"/>}
+              <div className="text-lg mb-1">{s.icon}</div>
+              <p className={`text-2xl font-bold mono ${s.color}`}>{s.value}</p>
+              <p className="text-xs text-slate-500 mt-0.5 leading-tight">{s.label}</p>
+              <p className="text-xs text-slate-700 mt-0.5 group-hover:text-slate-600 transition-colors">{active?"▲ close":s.sub}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* DRILL-DOWN PANEL */}
+      {drillDown && (
+        <div className="bg-[#0f1629] border border-amber-500/30 rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 bg-[#080d1a] border-b border-[#1e2d4a]">
+            <div className="flex items-center gap-2">
+              <span>{activeStat?.icon}</span>
+              <h3 className="text-white font-semibold text-sm">{activeStat?.label}</h3>
+              <span className={`mono font-bold text-sm ${activeStat?.color}`}>
+                {drillDown.id==="active_mawbs"?activeMawbs:drillDown.id==="new_mawbs"?newMawbs.length:drillDown.id==="total_bags"?bags.length:drillBags?.length} records
+              </span>
+            </div>
+            <div className="flex gap-2 items-center">
+              {["pending","overdue"].includes(drillDown.id)&&<Btn size="sm" onClick={()=>setPage("pending")}>Full View →</Btn>}
+              {drillDown.id==="active_mawbs"&&<Btn size="sm" onClick={()=>setPage("mawbs")}>Full View →</Btn>}
+              {drillDown.id==="new_mawbs"&&<Btn size="sm" onClick={()=>setPage("mawbs")}>Full View →</Btn>}
+              <button onClick={()=>setDrillDown(null)} className="text-slate-500 hover:text-white text-xl">×</button>
+            </div>
+          </div>
+
+          {drillDown.id==="active_mawbs" && (
+            <table className="w-full text-sm">
+              <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+                {["MAWB","Airline","Flight","Arrived LHR","MB Pending","MB Flown","Progress"].map(h=><th key={h} className="text-left px-4 py-2.5">{h}</th>)}
+              </tr></thead>
+              <tbody>{mawbs.filter(m=>m.status==="active").map(m=>{
+                const mb=bags.filter(b=>b.originalMawbId===m.id&&b.destinationType==="USA");
+                const p=mb.filter(b=>b.status==="Pending at LHR").length, fl=mb.filter(b=>b.status==="Flown to JFK").length;
+                const pct=mb.length?Math.round(fl/mb.length*100):0;
+                return <tr key={m.id} className="border-t border-[#0f1628] hover:bg-[#1a2644] transition-colors cursor-pointer" onClick={()=>{setPage("mawbs");}}>
+                  <td className="px-4 py-3 mono text-white font-semibold text-sm">{m.mawbNumber}</td>
+                  <td className="px-4 py-3 text-slate-300 text-sm">{m.airline}</td>
+                  <td className="px-4 py-3 mono text-slate-400 text-xs">{m.flightNumber}</td>
+                  <td className="px-4 py-3 text-slate-300 text-sm">{fmtDate(m.arrivalDate)}</td>
+                  <td className="px-4 py-3 mono"><span className={p>0?"text-amber-400 font-bold":"text-slate-400"}>{p}</span></td>
+                  <td className="px-4 py-3 mono text-green-400 font-semibold">{fl}</td>
+                  <td className="px-4 py-3 w-28">
+                    <div className="h-1.5 bg-[#1e2d4a] rounded-full"><div className="h-full bg-green-500 rounded-full" style={{width:`${pct}%`}}/></div>
+                    <p className="text-xs text-slate-500 mt-0.5">{pct}%</p>
+                  </td>
+                </tr>;
+              })}</tbody>
+            </table>
+          )}
+
+          {drillDown.id==="new_mawbs" && (
+            <table className="w-full text-sm">
+              <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+                {["New MAWB","Original MAWB","Airline","Flight","Date","Bags"].map(h=><th key={h} className="text-left px-4 py-2.5">{h}</th>)}
+              </tr></thead>
+              <tbody>{newMawbs.map(nm=>{
+                const origM=mawbs.find(m=>m.id===nm.originalMawbId);
+                return <tr key={nm.id} className="border-t border-[#0f1628] hover:bg-[#1a2644]">
+                  <td className="px-4 py-3 mono text-white font-semibold">{nm.mawbNumber}</td>
+                  <td className="px-4 py-3 mono text-purple-300 text-xs">{origM?.mawbNumber||"—"}</td>
+                  <td className="px-4 py-3 text-slate-300 text-sm">{nm.airline}</td>
+                  <td className="px-4 py-3 mono text-slate-400 text-xs">{nm.flightNumber}</td>
+                  <td className="px-4 py-3 text-slate-300 text-sm">{fmtDate(nm.flightDate)}</td>
+                  <td className="px-4 py-3 mono text-amber-400 font-bold">{nm.bagIds?.length||0}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          )}
+
+          {drillBags && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+                  {["Bag Number","Type","Original MAWB","Airline","Arrived","Days","Status","New MAWB"].map(h=><th key={h} className="text-left px-4 py-2.5">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {drillBags.length===0&&<tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">No bags in this category</td></tr>}
+                  {drillBags.map(b=>{
+                    const m=mawbs.find(x=>x.id===b.originalMawbId), nm=newMawbs.find(x=>x.id===b.newMawbId);
+                    const days=daysSince(b.arrivalDate), ov=b.status==="Pending at LHR"&&days>3;
+                    return <tr key={b.id} onClick={()=>setSearchBag(b)}
+                      className={`border-t border-[#0f1628] transition-colors cursor-pointer ${ov?"bg-amber-500/5 hover:bg-amber-500/8":"hover:bg-[#1a2644]"}`}>
+                      <td className="px-4 py-2.5 mono text-white font-semibold">{b.bagNumber}</td>
+                      <td className="px-4 py-2.5"><DestBadge type={b.destinationType}/></td>
+                      <td className="px-4 py-2.5 mono text-slate-400 text-xs">{m?.mawbNumber||"—"}</td>
+                      <td className="px-4 py-2.5 text-slate-300 text-xs">{m?.airline||"—"}</td>
+                      <td className="px-4 py-2.5 text-slate-300 text-xs">{fmtDate(b.arrivalDate)}</td>
+                      <td className="px-4 py-2.5"><span className={`mono font-bold ${days>7?"text-red-400":days>3?"text-amber-400":days>1?"text-slate-300":"text-slate-500"}`}>{days}d{ov?" ⚠":""}</span></td>
+                      <td className="px-4 py-2.5"><Sb status={b.status}/></td>
+                      <td className="px-4 py-2.5 mono text-xs text-purple-300">{nm?.mawbNumber||"—"}</td>
+                    </tr>;
+                  })}
+                </tbody>
+              </table>
+              {drillBags.length>0&&<p className="text-center text-slate-600 text-xs py-2">Click any row to view full bag details</p>}
+            </div>
+          )}
+
+          {drillDown.id==="total_bags" && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+                  {["Bag Number","Type","Original MAWB","Status","Days","New MAWB"].map(h=><th key={h} className="text-left px-4 py-2.5">{h}</th>)}
+                </tr></thead>
+                <tbody>{bags.slice(0,30).map(b=>{
+                  const m=mawbs.find(x=>x.id===b.originalMawbId), nm=newMawbs.find(x=>x.id===b.newMawbId);
+                  return <tr key={b.id} onClick={()=>setSearchBag(b)} className="border-t border-[#0f1628] hover:bg-[#1a2644] cursor-pointer">
+                    <td className="px-4 py-2.5 mono text-white font-semibold">{b.bagNumber}</td>
+                    <td className="px-4 py-2.5"><DestBadge type={b.destinationType}/></td>
+                    <td className="px-4 py-2.5 mono text-slate-400 text-xs">{m?.mawbNumber||"—"}</td>
+                    <td className="px-4 py-2.5"><Sb status={b.status}/></td>
+                    <td className="px-4 py-2.5 mono text-slate-400 text-xs">{daysSince(b.arrivalDate)}d</td>
+                    <td className="px-4 py-2.5 mono text-xs text-purple-300">{nm?.mawbNumber||"—"}</td>
+                  </tr>;
+                })}</tbody>
+              </table>
+              {bags.length>30&&<p className="text-center text-slate-600 text-xs py-2">Showing first 30 of {bags.length} bags · Go to MAWB Management for full list</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CHARTS ROW 1 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-5">
+          <h3 className="text-white font-semibold text-sm mb-1">Bag Status Distribution</h3>
+          <PieViz data={statusData} size={200}/>
+        </div>
+
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-5">
+          <h3 className="text-white font-semibold text-sm mb-1">MB Bags per MAWB</h3>
+          <BarViz data={mawbBarData} bars={[{key:"pending",name:"Pending",fill:"#f59e0b"},{key:"flown",name:"Flown",fill:"#22c55e"}]} xKey="name" height={200}/>
+        </div>
+
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-5">
+          <h3 className="text-white font-semibold text-sm mb-1">Pending Bag Aging</h3>
+          <HBarViz data={agingBuckets} valueKey="count" labelKey="label" height={160}/>
+        </div>
+      </div>
+
+      {/* CHARTS ROW 2 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {airlineData.length > 0 && (
+          <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-5">
+            <h3 className="text-white font-semibold text-sm mb-1">Bags Flown by Airline (LHR→JFK)</h3>
+              <HBarViz data={airlineData.map(d=>({...d,fill:"#8b5cf6"}))} valueKey="bags" labelKey="name" height={160}/>
+          </div>
+        )}
+
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-white font-semibold text-sm">Active MAWBs Progress</h3>
+              <p className="text-slate-500 text-xs">Click any MAWB to view details</p>
+            </div>
+            <Btn size="sm" variant="ghost" onClick={()=>setPage("mawbs")}>View All →</Btn>
+          </div>
+          <div className="space-y-2 max-h-52 overflow-y-auto">
+            {mawbs.filter(m=>m.status==="active").map(m=>{
+              const mb=bags.filter(b=>b.originalMawbId===m.id&&b.destinationType==="USA");
+              const pending=mb.filter(b=>b.status==="Pending at LHR").length;
+              const flown=mb.filter(b=>b.status==="Flown to JFK").length;
+              const pct=mb.length?Math.round(flown/mb.length*100):0;
+              const daysOld=daysSince(m.arrivalDate);
+              return (
+                <button key={m.id} onClick={()=>setPage("mawbs")}
+                  className="w-full flex items-center gap-3 p-3 bg-[#080d1a] rounded-xl border border-[#1e2d4a] hover:border-amber-500/30 hover:bg-[#1a2644] transition-all text-left">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-white text-xs font-semibold mono">{m.mawbNumber}</p>
+                      {daysOld>5&&pending>0&&<span className="text-amber-400 text-xs">⚠</span>}
+                    </div>
+                    <p className="text-slate-500 text-xs truncate">{m.airline} · {daysOld}d ago</p>
+                  </div>
+                  <div className="text-xs flex-shrink-0 text-right">
+                    <span className="text-amber-400 font-semibold">{pending}</span><span className="text-slate-600"> pend · </span>
+                    <span className="text-green-400 font-semibold">{flown}</span><span className="text-slate-600"> flown</span>
+                  </div>
+                  <div className="w-16 flex-shrink-0">
+                    <div className="h-1.5 bg-[#1e2d4a] rounded-full"><div className="h-full bg-green-500 rounded-full" style={{width:`${pct}%`}}/></div>
+                    <p className="text-right text-xs text-slate-600 mt-0.5">{pct}%</p>
+                  </div>
+                </button>
+              );
+            })}
+            {mawbs.filter(m=>m.status==="active").length===0&&
+              <p className="text-slate-600 text-sm text-center py-8">No active MAWBs · Upload a manifest to begin</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─────────────────── UPLOAD MANIFEST ─────────────────── */
+const UploadManifest = ({ mawbs, setMawbs, bags, setBags, addLog }) => {
+  const [dragging, setDragging] = useState(false);
+  const [parsed, setParsed] = useState(null);
+  const [manualMode, setManualMode] = useState(false);
+  const [form, setForm] = useState({ mawbNumber:"", flightDate:"", arrivalDate:"", airline:"", flightNumber:"", bagsRaw:"" });
+  const [msg, setMsg] = useState(null);
+  const fileRef = useRef();
+
+  const parseFile = file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type:"binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header:1 });
+        let mawb="", arrDate="", flightDate="";
+        const bagSet = new Set();
+        rows.forEach(row => {
+          row.forEach(cell => {
+            const s = String(cell||"").trim();
+            if (/^\d{3}-\d{8}$/.test(s)&&!mawb) mawb=s;
+            if (/^(8\d{3,}|MB\d+)$/i.test(s)) bagSet.add(s.toUpperCase());
+            const d = new Date(s);
+            if (!isNaN(d)&&d.getFullYear()>2000) { if(!flightDate) flightDate=d.toISOString().split("T")[0]; else if(!arrDate) arrDate=d.toISOString().split("T")[0]; }
+          });
+        });
+        const bagNums = [...bagSet];
+        if (!mawb && bagNums.length===0) { setMsg({type:"error",text:"Could not detect bag data. Please check file format or use manual entry."}); return; }
+        setParsed({ mawbNumber:mawb||"", flightDate:flightDate||"", arrivalDate:arrDate||"", bags:bagNums });
+        setMsg({type:"success",text:`Detected ${bagNums.length} unique bags from file.`});
+      } catch {
+        setMsg({type:"error",text:"Failed to parse file. Try CSV or XLSX."});
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleDrop = e => { e.preventDefault(); setDragging(false); const f=e.dataTransfer.files[0]; if(f)parseFile(f); };
+  const handleFile = e => { const f=e.target.files[0]; if(f)parseFile(f); };
+
+  const submitManual = () => {
+    const bagLines = [...new Set(form.bagsRaw.split(/[\n,;]+/).map(b=>b.trim().toUpperCase()).filter(Boolean))];
+    setParsed({ mawbNumber:form.mawbNumber, flightDate:form.flightDate, arrivalDate:form.arrivalDate, airline:form.airline, flightNumber:form.flightNumber, bags:bagLines });
+  };
+
+  const confirmImport = () => {
+    if (!parsed||!parsed.mawbNumber) { setMsg({type:"error",text:"MAWB number is required."}); return; }
+    if (mawbs.find(m=>m.mawbNumber===parsed.mawbNumber)) { setMsg({type:"error",text:"This MAWB already exists in the system."}); return; }
+    const mId = genId();
+    const newMawb = { id:mId, mawbNumber:parsed.mawbNumber, flightDate:parsed.flightDate||"", arrivalDate:parsed.arrivalDate||new Date().toISOString().split("T")[0], airline:parsed.airline||"Unknown", flightNumber:parsed.flightNumber||"", route:"DEL→LHR", status:"active" };
+    const newBags = parsed.bags.map(b => ({
+      id:genId(), bagNumber:b, originalMawbId:mId,
+      destinationType:classifyBag(b),
+      status: classifyBag(b)==="USA" ? "Pending at LHR" : "Arrived LHR",
+      arrivalDate:parsed.arrivalDate||new Date().toISOString().split("T")[0], newMawbId:null, remarks:""
+    }));
+    setMawbs(p=>[newMawb,...p]);
+    setBags(p=>[...p,...newBags]);
+    const lhr=newBags.filter(b=>b.destinationType==="LHR").length, usa=newBags.filter(b=>b.destinationType==="USA").length;
+    addLog("Manifest Uploaded", `MAWB ${parsed.mawbNumber} imported — ${newBags.length} bags (${lhr} LHR, ${usa} USA transit)`);
+    setMsg({type:"success",text:`✓ Imported MAWB ${parsed.mawbNumber} with ${newBags.length} bags (${lhr} LHR delivery, ${usa} USA transit)`});
+    setParsed(null); setForm({mawbNumber:"",flightDate:"",arrivalDate:"",airline:"",flightNumber:"",bagsRaw:""});
+  };
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      {msg && <div className={`p-4 rounded-xl border text-sm ${msg.type==="success"?"bg-green-500/10 border-green-500/30 text-green-300":"bg-red-500/10 border-red-500/30 text-red-400"}`}>{msg.text}</div>}
+
+      <div className="flex gap-3">
+        <Btn variant={manualMode?"ghost":"amber"} onClick={()=>setManualMode(false)}>📁 File Upload</Btn>
+        <Btn variant={manualMode?"amber":"ghost"} onClick={()=>setManualMode(true)}>✏️ Manual Entry</Btn>
+      </div>
+
+      {!manualMode ? (
+        <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={handleDrop}
+          className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${dragging?"border-amber-500 bg-amber-500/5":"border-[#1e2d4a] hover:border-amber-500/40"}`}
+          onClick={()=>fileRef.current.click()}>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} className="hidden"/>
+          <div className="text-5xl mb-4">📤</div>
+          <p className="text-white font-semibold">Drop Excel / CSV manifest here</p>
+          <p className="text-slate-500 text-sm mt-2">or click to browse · Supports .xlsx, .xls, .csv</p>
+          <p className="text-slate-600 text-xs mt-3">Auto-detects: MAWB · Bag Numbers · Dates · Classifies LHR vs USA bags</p>
+        </div>
+      ) : (
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+          <h3 className="text-white font-semibold">Manual Manifest Entry</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="MAWB Number" placeholder="176-12345678" value={form.mawbNumber} onChange={e=>setForm(f=>({...f,mawbNumber:e.target.value}))}/>
+            <Input label="Airline" placeholder="Air India" value={form.airline} onChange={e=>setForm(f=>({...f,airline:e.target.value}))}/>
+            <Input label="Flight Number" placeholder="AI-101" value={form.flightNumber} onChange={e=>setForm(f=>({...f,flightNumber:e.target.value}))}/>
+            <Input label="Flight Date (DEL)" type="date" value={form.flightDate} onChange={e=>setForm(f=>({...f,flightDate:e.target.value}))}/>
+            <div className="col-span-2">
+              <Input label="Arrival Date (LHR)" type="date" value={form.arrivalDate} onChange={e=>setForm(f=>({...f,arrivalDate:e.target.value}))}/>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Bag Numbers (one per line or comma-separated)</label>
+            <textarea rows={6} value={form.bagsRaw} onChange={e=>setForm(f=>({...f,bagsRaw:e.target.value}))}
+              placeholder={"8001\n8002\nMB1001\nMB1002\nMB1003"}
+              className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm mono resize-none"/>
+            <p className="text-xs text-slate-600 mt-1">Bags starting with "8" → LHR delivery · Bags starting with "MB" → USA transit</p>
+          </div>
+          <Btn onClick={submitManual}>Preview Import</Btn>
+        </div>
+      )}
+
+      {parsed && (
+        <div className="bg-[#0f1629] border border-amber-500/30 rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-amber-300 font-semibold">📋 Preview — Edit & Confirm Import</h3>
+            <span className="text-slate-500 text-xs">{parsed.bags.length} unique bags detected</span>
+          </div>
+          <p className="text-slate-500 text-xs -mt-2">Review and correct any fields before confirming. MAWB and dates may need manual entry if not detected automatically.</p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">MAWB Number <span className="text-red-400">*</span></label>
+              <input
+                value={parsed.mawbNumber}
+                onChange={e=>setParsed(p=>({...p,mawbNumber:e.target.value}))}
+                placeholder="e.g. 176-12345678"
+                className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm mono transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Airline</label>
+              <input
+                value={parsed.airline||""}
+                onChange={e=>setParsed(p=>({...p,airline:e.target.value}))}
+                placeholder="e.g. Air India"
+                className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Flight Number</label>
+              <input
+                value={parsed.flightNumber||""}
+                onChange={e=>setParsed(p=>({...p,flightNumber:e.target.value}))}
+                placeholder="e.g. AI-101"
+                className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Flight Date (DEL departure)</label>
+              <input
+                type="date"
+                value={parsed.flightDate||""}
+                onChange={e=>setParsed(p=>({...p,flightDate:e.target.value}))}
+                className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-amber-500/50 text-sm transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Arrival Date at LHR</label>
+              <input
+                type="date"
+                value={parsed.arrivalDate||""}
+                onChange={e=>setParsed(p=>({...p,arrivalDate:e.target.value}))}
+                className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-amber-500/50 text-sm transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="bg-[#080d1a] rounded-xl p-3 border border-[#1e2d4a]">
+            <div className="flex items-center gap-4 mb-3 text-xs text-slate-400">
+              <span>Total: <strong className="text-white">{parsed.bags.length}</strong></span>
+              <span>🇬🇧 LHR: <strong className="text-sky-300">{parsed.bags.filter(b=>classifyBag(b)==="LHR").length}</strong></span>
+              <span>🇺🇸 USA: <strong className="text-rose-300">{parsed.bags.filter(b=>classifyBag(b)==="USA").length}</strong></span>
+              <span className="text-slate-600">Bags starting with 8 = LHR · MB = USA</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
+              {parsed.bags.map(b => (
+                <span key={b} className={`px-2 py-0.5 rounded text-xs font-medium mono ${classifyBag(b)==="LHR"?"bg-sky-500/20 text-sky-300":"bg-rose-500/20 text-rose-300"}`}>{b}</span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <Btn onClick={confirmImport}>✓ Confirm Import</Btn>
+            <Btn variant="ghost" onClick={()=>setParsed(null)}>Cancel</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─────────────────── MAWB MANAGEMENT ─────────────────── */
+const MAWBManagement = ({ mawbs, bags, setBags, newMawbs, selectedMawb, setSelectedMawb, addLog }) => {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+
+  const filtered = useMemo(()=>{
+    let d = mawbs;
+    if (filter!=="all") d=d.filter(m=>m.status===filter);
+    if (search) d=d.filter(m=>m.mawbNumber.includes(search)||m.airline.toLowerCase().includes(search.toLowerCase()));
+    return d;
+  },[mawbs,filter,search]);
+
+  const { page, setPage, total, slice } = usePaginate(filtered, 8);
+
+  const getStats = m => {
+    const b = bags.filter(x=>x.originalMawbId===m.id);
+    const mb = b.filter(x=>x.destinationType==="USA");
+    return {
+      total:b.length, lhr:b.filter(x=>x.destinationType==="LHR").length,
+      mbTotal:mb.length, mbPending:mb.filter(x=>["Pending at LHR","Arrived LHR"].includes(x.status)).length,
+      mbFlown:mb.filter(x=>x.status==="Flown to JFK").length,
+      newMawbs:newMawbs.filter(n=>n.originalMawbId===m.id).map(n=>n.mawbNumber),
+    };
+  };
+
+  if (selectedMawb) {
+    const m = mawbs.find(x=>x.id===selectedMawb);
+    if (!m) return null;
+    const s = getStats(m);
+    const mBags = bags.filter(b=>b.originalMawbId===m.id);
+
+    const markDelivered = (bagId) => {
+      setBags(prev=>prev.map(b=>b.id===bagId?{...b,status:"Delivered"}:b));
+      const b = bags.find(x=>x.id===bagId);
+      addLog("Bag Delivered", `${b?.bagNumber} marked as Delivered under MAWB ${m.mawbNumber}`);
+    };
+
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-3">
+          <Btn variant="ghost" onClick={()=>setSelectedMawb(null)}>← Back</Btn>
+          <h2 className="text-white font-bold text-xl mono">{m.mawbNumber}</h2>
+          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${m.status==="completed"?"bg-emerald-500/20 text-emerald-300":"bg-blue-500/20 text-blue-300"}`}>{m.status}</span>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[["Airline",m.airline],["Flight",m.flightNumber],["Departed DEL",fmtDate(m.flightDate)],["Arrived LHR",fmtDate(m.arrivalDate)],["Total Bags",s.total],["LHR Bags",s.lhr],["USA Pending",s.mbPending],["USA Flown",s.mbFlown]].map(([k,v])=>(
+            <div key={k} className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-3">
+              <p className="text-slate-500 text-xs uppercase tracking-wider">{k}</p>
+              <p className="text-white font-semibold mono mt-1 text-lg">{v}</p>
+            </div>
+          ))}
+        </div>
+        {s.newMawbs.length > 0 && (
+          <div className="bg-[#0f1629] border border-purple-500/30 rounded-xl p-4">
+            <p className="text-purple-300 text-sm font-semibold mb-2">🏷 Linked LHR→JFK MAWBs</p>
+            <div className="flex flex-wrap gap-2">
+              {s.newMawbs.map(n=><span key={n} className="mono text-sm bg-purple-500/20 text-purple-300 px-3 py-1 rounded-lg border border-purple-500/30">{n}</span>)}
+            </div>
+          </div>
+        )}
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#1e2d4a]"><p className="text-white font-semibold text-sm">All Bags ({mBags.length})</p></div>
+          <table className="w-full text-sm">
+            <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+              {["Bag Number","Type","Status","Days in LHR","New MAWB","Remarks","Action"].map(h=><th key={h} className="text-left px-4 py-2.5">{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {mBags.map(b => {
+                const nm = newMawbs.find(n=>n.id===b.newMawbId);
+                const days = daysSince(b.arrivalDate);
+                const overdue = b.status==="Pending at LHR"&&days>3;
+                const canDeliver = b.destinationType==="LHR" && b.status!=="Delivered";
+                return (
+                  <tr key={b.id} className={`border-t border-[#0f1628] ${overdue?"bg-amber-500/5":""} hover:bg-[#1a2644] transition-colors`}>
+                    <td className="px-4 py-3 mono text-white font-medium">{b.bagNumber}</td>
+                    <td className="px-4 py-3"><DestBadge type={b.destinationType}/></td>
+                    <td className="px-4 py-3"><Sb status={b.status}/></td>
+                    <td className="px-4 py-3">
+                      <span className={`font-semibold mono ${overdue?"text-amber-400":days>1?"text-slate-300":"text-slate-500"}`}>{days}d{overdue?" ⚠":""}</span>
+                    </td>
+                    <td className="px-4 py-3"><span className="mono text-slate-400 text-xs">{nm?.mawbNumber||"—"}</span></td>
+                    <td className="px-4 py-3 text-slate-400 text-xs max-w-[160px] truncate">{b.remarks||"—"}</td>
+                    <td className="px-4 py-3">
+                      {canDeliver
+                        ? <Btn variant="green" size="sm" onClick={()=>markDelivered(b.id)}>✓ Delivered</Btn>
+                        : <span className="text-slate-600 text-xs">—</span>
+                      }
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-3">
+        <div className="relative flex-1 min-w-48">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search MAWB or airline…" className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40"/>
+        </div>
+        {["all","active","completed"].map(f=>(
+          <Btn key={f} variant={filter===f?"amber":"ghost"} onClick={()=>setFilter(f)} size="sm">{f.charAt(0).toUpperCase()+f.slice(1)}</Btn>
+        ))}
+      </div>
+
+      <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+            {["MAWB Number","Airline / Flight","Arrived LHR","Total Bags","MB Pending","MB Flown","New MAWBs","Status",""].map(h=><th key={h} className="text-left px-4 py-3">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {slice.map(m => {
+              const s=getStats(m);
+              return (
+                <tr key={m.id} className="border-t border-[#0f1628] hover:bg-[#1a2644] transition-colors cursor-pointer" onClick={()=>setSelectedMawb(m.id)}>
+                  <td className="px-4 py-3 mono text-white font-semibold text-sm">{m.mawbNumber}</td>
+                  <td className="px-4 py-3"><p className="text-slate-200 text-sm">{m.airline}</p><p className="text-slate-500 text-xs">{m.flightNumber}</p></td>
+                  <td className="px-4 py-3 text-slate-300 text-sm">{fmtDate(m.arrivalDate)}</td>
+                  <td className="px-4 py-3 mono text-slate-200">{s.total}</td>
+                  <td className="px-4 py-3 mono"><span className={s.mbPending>0&&daysSince(m.arrivalDate)>3?"text-amber-400 font-bold":"text-slate-200"}>{s.mbPending}</span></td>
+                  <td className="px-4 py-3 mono text-green-400">{s.mbFlown}</td>
+                  <td className="px-4 py-3"><span className="text-purple-300 text-xs">{s.newMawbs.length>0?`${s.newMawbs.length} MAWB${s.newMawbs.length>1?"s":""}` : "—"}</span></td>
+                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${m.status==="completed"?"bg-emerald-500/20 text-emerald-300":"bg-blue-500/20 text-blue-300"}`}>{m.status}</span></td>
+                  <td className="px-4 py-3 text-slate-500 text-lg">›</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {slice.length===0&&<EmptyState icon="📋" title="No MAWBs found" sub="Try adjusting search or filters"/>}
+      </div>
+      <Pagination page={page} total={total} setPage={setPage}/>
+    </div>
+  );
+};
+
+/* ─────────────────── PENDING LHR BAGS ─────────────────── */
+const PendingLHRBags = ({ bags, mawbs, newMawbs, setBags, addLog }) => {
+  const [filterStatus, setFilterStatus] = useState("Pending at LHR");
+  const [filterMawb, setFilterMawb] = useState("all");
+  const [filterDays, setFilterDays] = useState("all");
+  const [search, setSearch] = useState("");
+  const [editBag, setEditBag] = useState(null);
+
+  const filtered = useMemo(()=>{
+    let d = bags.filter(b=>b.destinationType==="USA");
+    if (filterStatus!=="all") d=d.filter(b=>b.status===filterStatus);
+    if (filterMawb!=="all") d=d.filter(b=>b.originalMawbId===filterMawb);
+    if (filterDays==="gt3") d=d.filter(b=>daysSince(b.arrivalDate)>3);
+    if (filterDays==="gt7") d=d.filter(b=>daysSince(b.arrivalDate)>7);
+    if (search) d=d.filter(b=>b.bagNumber.toUpperCase().includes(search.toUpperCase()));
+    return d.sort((a,b)=>daysSince(b.arrivalDate)-daysSince(a.arrivalDate));
+  },[bags,filterStatus,filterMawb,filterDays,search]);
+
+  const { page, setPage, total, slice } = usePaginate(filtered, 12);
+
+  const updateBag = (id, updates) => {
+    setBags(prev=>prev.map(b=>b.id===id?{...b,...updates}:b));
+    const b = bags.find(x=>x.id===id);
+    addLog("Bag Updated",`${b?.bagNumber} → ${updates.status||b?.status}${updates.remarks?` | ${updates.remarks}`:""}`);
+    setEditBag(null);
+  };
+
+  const mawbOptions = [{label:"All MAWBs",value:"all"},...mawbs.map(m=>({label:m.mawbNumber,value:m.id}))];
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-3">
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search bag number…" className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40 w-48"/>
+        </div>
+        <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none">
+          <option value="all">All Statuses</option>
+          {["In Transit","Arrived LHR","Pending at LHR","Assigned New MAWB","Flown to JFK"].map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={filterMawb} onChange={e=>setFilterMawb(e.target.value)} className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none">
+          {mawbOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <select value={filterDays} onChange={e=>setFilterDays(e.target.value)} className="bg-[#0f1629] border border-[#1e2d4a] rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none">
+          <option value="all">All Ages</option>
+          <option value="gt3">Pending &gt;3 days</option>
+          <option value="gt7">Pending &gt;7 days</option>
+        </select>
+        <div className="ml-auto text-slate-400 text-sm flex items-center">{filtered.length} bags</div>
+      </div>
+
+      <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-[#080d1a] text-slate-500 text-xs uppercase tracking-wider">
+            {["Bag Number","Original MAWB","Status","Arrived LHR","Days Pending","New MAWB","Remarks",""].map(h=><th key={h} className="text-left px-4 py-3">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {slice.map(b => {
+              const m = mawbs.find(x=>x.id===b.originalMawbId);
+              const nm = newMawbs.find(x=>x.id===b.newMawbId);
+              const days = daysSince(b.arrivalDate);
+              const overdue = b.status==="Pending at LHR"&&days>3;
+              return (
+                <tr key={b.id} className={`border-t border-[#0f1628] transition-colors ${overdue?"bg-amber-500/5 hover:bg-amber-500/10":"hover:bg-[#1a2644]"}`}>
+                  <td className="px-4 py-3 mono text-white font-semibold">{b.bagNumber}</td>
+                  <td className="px-4 py-3 mono text-slate-400 text-xs">{m?.mawbNumber||"—"}</td>
+                  <td className="px-4 py-3"><Sb status={b.status}/></td>
+                  <td className="px-4 py-3 text-slate-300 text-sm">{fmtDate(b.arrivalDate)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`mono font-bold text-base ${days>7?"text-red-400":days>3?"text-amber-400":days>1?"text-slate-300":"text-slate-500"}`}>
+                      {days}d {overdue&&"⚠"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 mono text-xs text-slate-400">{nm?.mawbNumber||"—"}</td>
+                  <td className="px-4 py-3 text-slate-400 text-xs max-w-[120px] truncate">{b.remarks||"—"}</td>
+                  <td className="px-4 py-3"><Btn variant="ghost" size="sm" onClick={()=>setEditBag(b)}>Edit</Btn></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {slice.length===0&&<EmptyState icon="⏳" title="No bags found" sub="Try adjusting filters"/>}
+      </div>
+      <Pagination page={page} total={total} setPage={setPage}/>
+
+      {editBag && (
+        <Modal title={`Edit Bag — ${editBag.bagNumber}`} onClose={()=>setEditBag(null)}>
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Status</label>
+              <select defaultValue={editBag.status} id="edit-status" className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white focus:outline-none text-sm">
+                {["In Transit","Arrived LHR","Pending at LHR","Assigned New MAWB","Flown to JFK","Delivered"].map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Remarks</label>
+              <textarea rows={3} defaultValue={editBag.remarks} id="edit-remarks" className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none text-sm resize-none"/>
+            </div>
+            <div className="flex gap-3">
+              <Btn onClick={()=>updateBag(editBag.id,{status:document.getElementById("edit-status").value,remarks:document.getElementById("edit-remarks").value})}>Save Changes</Btn>
+              <Btn variant="ghost" onClick={()=>setEditBag(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+/* ─────────────────── ASSIGN NEW MAWB ─────────────────── */
+const AssignNewMAWB = ({ mawbs, bags, newMawbs, setNewMawbs, setBags, addLog }) => {
+  const [step, setStep] = useState(1);
+  const [selectedOrigMawb, setSelectedOrigMawb] = useState("");
+  const [selectedBags, setSelectedBags] = useState([]);
+  const [newMawbForm, setNewMawbForm] = useState({ mawbNumber:"", airline:"", flightNumber:"", flightDate:"" });
+  const [done, setDone] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const pendingBags = useMemo(()=>{
+    if (!selectedOrigMawb) return [];
+    return bags.filter(b=>b.originalMawbId===selectedOrigMawb&&b.destinationType==="USA"&&["Pending at LHR","Arrived LHR"].includes(b.status));
+  },[selectedOrigMawb,bags]);
+
+  const filteredPending = useMemo(()=>pendingBags.filter(b=>!search||b.bagNumber.toUpperCase().includes(search.toUpperCase())),[pendingBags,search]);
+
+  const toggleBag = id => setSelectedBags(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const selectAll = () => setSelectedBags(selectedBags.length===filteredPending.length?[]:filteredPending.map(b=>b.id));
+
+  const assign = () => {
+    if (!newMawbForm.mawbNumber||selectedBags.length===0) return;
+    const existingNm = newMawbs.find(n=>n.mawbNumber===newMawbForm.mawbNumber&&n.originalMawbId===selectedOrigMawb);
+    if (existingNm) { alert("This MAWB number is already assigned to this same original MAWB. Choose a different MAWB number or select a different original MAWB."); return; }
+    const nm = { id:genId(), ...newMawbForm, originalMawbId:selectedOrigMawb, route:"LHR→JFK", bagIds:selectedBags, createdAt:new Date().toISOString() };
+    setNewMawbs(p=>[nm,...p]);
+    setBags(prev=>prev.map(b=>selectedBags.includes(b.id)?{...b,status:"Flown to JFK",newMawbId:nm.id}:b));
+    const m = mawbs.find(x=>x.id===selectedOrigMawb);
+    const bagNums = bags.filter(b=>selectedBags.includes(b.id)).map(b=>b.bagNumber).join(", ");
+    addLog("MAWB Assigned",`New MAWB ${nm.mawbNumber} assigned to ${selectedBags.length} bags: ${bagNums}. Airline: ${nm.airline} ${nm.flightNumber}`);
+    setDone({ nm, count:selectedBags.length, bagNums, origMawb:m?.mawbNumber });
+    setStep(1); setSelectedOrigMawb(""); setSelectedBags([]); setNewMawbForm({mawbNumber:"",airline:"",flightNumber:"",flightDate:""});
+  };
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      {done && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+          <p className="text-green-300 font-semibold">✓ MAWB {done.nm.mawbNumber} assigned successfully</p>
+          <p className="text-green-400/70 text-sm mt-1">{done.count} bags marked as "Flown to JFK" · Original: {done.origMawb}</p>
+          <button onClick={()=>setDone(null)} className="text-green-400/50 text-xs mt-2 hover:text-green-400">Dismiss</button>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        {[{n:1,l:"Select Original MAWB"},{n:2,l:"Select Bags"},{n:3,l:"New MAWB Details"}].map(s=>(
+          <div key={s.n} className="flex items-center gap-2">
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${step>=s.n?"bg-amber-500 text-black":"bg-[#1e2d4a] text-slate-500"}`}>{s.n}</div>
+            <span className={`text-sm ${step===s.n?"text-white":"text-slate-500"}`}>{s.l}</span>
+            {s.n<3&&<span className="text-slate-600 mx-1">›</span>}
+          </div>
+        ))}
+      </div>
+
+      {step===1 && (
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+          <h3 className="text-white font-semibold">Select the Original DEL→LHR MAWB</h3>
+          <p className="text-slate-500 text-sm">Choose the MAWB that contains pending MB bags in LHR</p>
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {mawbs.filter(m=>m.status==="active").map(m=>{
+              const pending = bags.filter(b=>b.originalMawbId===m.id&&b.destinationType==="USA"&&["Pending at LHR","Arrived LHR"].includes(b.status)).length;
+              return (
+                <button key={m.id} onClick={()=>{setSelectedOrigMawb(m.id);setStep(2);}}
+                  className={`w-full flex items-center gap-4 p-4 rounded-xl border text-left transition-all ${selectedOrigMawb===m.id?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] hover:border-slate-600 bg-[#080d1a]"}`}>
+                  <div className="flex-1">
+                    <p className="text-white font-semibold mono">{m.mawbNumber}</p>
+                    <p className="text-slate-500 text-xs mt-0.5">{m.airline} · {m.flightNumber} · Arrived {fmtDate(m.arrivalDate)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={`font-bold text-lg mono ${pending>0?"text-amber-400":"text-slate-600"}`}>{pending}</p>
+                    <p className="text-slate-500 text-xs">pending bags</p>
+                  </div>
+                  {pending===0&&<span className="text-slate-600 text-sm">No pending bags</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {step===2 && (
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-white font-semibold">Select Pending MB Bags</h3>
+            <Btn variant="ghost" size="sm" onClick={()=>setStep(1)}>← Change MAWB</Btn>
+          </div>
+          <div className="bg-[#080d1a] rounded-xl p-3 text-sm">
+            <span className="text-slate-400">Original MAWB: </span><span className="text-white font-semibold mono">{mawbs.find(m=>m.id===selectedOrigMawb)?.mawbNumber}</span>
+            <span className="text-slate-600 mx-3">·</span>
+            <span className="text-amber-400 font-semibold">{pendingBags.length}</span><span className="text-slate-400"> pending bags available</span>
+          </div>
+          <div className="flex gap-3">
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter bags…" className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40"/>
+            </div>
+            <Btn variant="ghost" size="sm" onClick={selectAll}>{selectedBags.length===filteredPending.length&&filteredPending.length>0?"Deselect All":"Select All"}</Btn>
+          </div>
+          {pendingBags.length===0 ? (
+            <EmptyState icon="✅" title="No pending bags for this MAWB" sub="All MB bags have been assigned or forwarded"/>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+              {filteredPending.map(b => {
+                const days=daysSince(b.arrivalDate), sel=selectedBags.includes(b.id);
+                return (
+                  <button key={b.id} onClick={()=>toggleBag(b.id)}
+                    className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${sel?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] hover:border-slate-600 bg-[#080d1a]"}`}>
+                    <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border ${sel?"bg-amber-500 border-amber-500":"border-[#2e3f5a]"}`}>
+                      {sel&&<span className="text-black text-xs font-bold">✓</span>}
+                    </div>
+                    <div>
+                      <p className="text-white text-sm font-semibold mono">{b.bagNumber}</p>
+                      <p className={`text-xs ${days>3?"text-amber-400":"text-slate-500"}`}>{days}d in LHR{days>3?" ⚠":""}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex gap-3">
+            <Btn disabled={selectedBags.length===0} onClick={()=>setStep(3)}>Next: New MAWB Details ({selectedBags.length} bags) →</Btn>
+          </div>
+        </div>
+      )}
+
+      {step===3 && (
+        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-white font-semibold">New LHR→JFK MAWB Details</h3>
+            <Btn variant="ghost" size="sm" onClick={()=>setStep(2)}>← Back</Btn>
+          </div>
+          <div className="bg-[#080d1a] rounded-xl p-3 flex flex-wrap gap-3 text-sm">
+            <div><span className="text-slate-500">Bags selected: </span><span className="text-amber-400 font-bold">{selectedBags.length}</span></div>
+            <div><span className="text-slate-500">Original MAWB: </span><span className="text-white mono">{mawbs.find(m=>m.id===selectedOrigMawb)?.mawbNumber}</span></div>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {bags.filter(b=>selectedBags.includes(b.id)).map(b=><span key={b.id} className="mono text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded">{b.bagNumber}</span>)}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2"><Input label="New MAWB Number (LHR→JFK)" placeholder="176-99998888" value={newMawbForm.mawbNumber} onChange={e=>setNewMawbForm(f=>({...f,mawbNumber:e.target.value}))}/></div>
+            <Input label="Airline" placeholder="American Airlines" value={newMawbForm.airline} onChange={e=>setNewMawbForm(f=>({...f,airline:e.target.value}))}/>
+            <Input label="Flight Number" placeholder="AA-101" value={newMawbForm.flightNumber} onChange={e=>setNewMawbForm(f=>({...f,flightNumber:e.target.value}))}/>
+            <div className="col-span-2"><Input label="Flight Date (LHR→JFK)" type="date" value={newMawbForm.flightDate} onChange={e=>setNewMawbForm(f=>({...f,flightDate:e.target.value}))}/></div>
+          </div>
+          <Btn onClick={assign} disabled={!newMawbForm.mawbNumber||selectedBags.length===0}>✓ Assign MAWB & Mark as Flown to JFK</Btn>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─────────────────── REPORTS ─────────────────── */
+const Reports = ({ mawbs, bags, newMawbs }) => {
+  const [generated, setGenerated] = useState(false);
+
+  const exportExcel = (type) => {
+    let data = [], filename = "";
+    if (type==="pending") {
+      data = bags.filter(b=>b.status==="Pending at LHR"&&b.destinationType==="USA").map(b=>{
+        const m=mawbs.find(x=>x.id===b.originalMawbId);
+        return { "Bag Number":b.bagNumber, "Original MAWB":m?.mawbNumber||"", "Airline":m?.airline||"", "Arrived LHR":fmtDate(b.arrivalDate), "Days Pending":daysSince(b.arrivalDate), "Status":b.status, "Remarks":b.remarks };
+      });
+      filename = "PendingLHRBags.xlsx";
+    } else if (type==="flown") {
+      data = bags.filter(b=>b.status==="Flown to JFK").map(b=>{
+        const m=mawbs.find(x=>x.id===b.originalMawbId), nm=newMawbs.find(x=>x.id===b.newMawbId);
+        return { "Bag Number":b.bagNumber, "Original MAWB":m?.mawbNumber||"", "New MAWB":nm?.mawbNumber||"", "Airline":nm?.airline||"", "Flight":nm?.flightNumber||"", "Flight Date":fmtDate(nm?.flightDate), "Remarks":b.remarks };
+      });
+      filename = "FlownToJFKBags.xlsx";
+    } else if (type==="aging") {
+      data = bags.filter(b=>b.destinationType==="USA").map(b=>{
+        const m=mawbs.find(x=>x.id===b.originalMawbId), nm=newMawbs.find(x=>x.id===b.newMawbId);
+        return { "Bag Number":b.bagNumber, "Original MAWB":m?.mawbNumber||"", "Arrived LHR":fmtDate(b.arrivalDate), "Days Elapsed":daysSince(b.arrivalDate), "Status":b.status, "New MAWB":nm?.mawbNumber||"", "Airline":nm?.airline||"", "Remarks":b.remarks };
+      });
+      filename = "AgingReport.xlsx";
+    } else if (type==="mawbs") {
+      data = mawbs.map(m=>{
+        const b=bags.filter(x=>x.originalMawbId===m.id), mb=b.filter(x=>x.destinationType==="USA");
+        return { "Original MAWB":m.mawbNumber, "Airline":m.airline, "Flight":m.flightNumber, "Flight Date":fmtDate(m.flightDate), "Arrived LHR":fmtDate(m.arrivalDate), "Total Bags":b.length, "LHR Bags":b.filter(x=>x.destinationType==="LHR").length, "MB Bags":mb.length, "MB Pending":mb.filter(x=>["Pending at LHR","Arrived LHR"].includes(x.status)).length, "MB Flown":mb.filter(x=>x.status==="Flown to JFK").length, "Status":m.status };
+      });
+      filename = "MAWBSummary.xlsx";
+    }
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    XLSX.writeFile(wb, filename);
+    setGenerated(true);
+    setTimeout(()=>setGenerated(false),3000);
+  };
+
+  const exportCSV = (type) => {
+    let data = [], filename="";
+    if (type==="pending") {
+      data = bags.filter(b=>b.status==="Pending at LHR"&&b.destinationType==="USA").map(b=>{const m=mawbs.find(x=>x.id===b.originalMawbId); return [b.bagNumber,m?.mawbNumber||"",m?.airline||"",fmtDate(b.arrivalDate),daysSince(b.arrivalDate),b.status,b.remarks||""];});
+      filename="PendingLHRBags.csv";
+    } else if (type==="flown") {
+      data = bags.filter(b=>b.status==="Flown to JFK").map(b=>{const m=mawbs.find(x=>x.id===b.originalMawbId),nm=newMawbs.find(x=>x.id===b.newMawbId); return [b.bagNumber,m?.mawbNumber||"",nm?.mawbNumber||"",nm?.airline||"",nm?.flightNumber||"",fmtDate(nm?.flightDate),b.remarks||""];});
+      filename="FlownBags.csv";
+    }
+    const csv = data.map(r=>r.join(",")).join("\n");
+    const a = document.createElement("a"); a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv); a.download=filename; a.click();
+    setGenerated(true); setTimeout(()=>setGenerated(false),3000);
+  };
+
+  const pendingCount = bags.filter(b=>b.status==="Pending at LHR"&&b.destinationType==="USA").length;
+  const flownCount = bags.filter(b=>b.status==="Flown to JFK").length;
+  const overdueCount = bags.filter(b=>b.status==="Pending at LHR"&&daysSince(b.arrivalDate)>3).length;
+
+  const reports = [
+    { id:"pending", icon:"⏳", title:"Pending LHR Bags", desc:`${pendingCount} bags currently waiting in LHR`, color:"text-amber-400", alert:pendingCount>0 },
+    { id:"flown", icon:"🛫", title:"Flown to JFK Report", desc:`${flownCount} bags successfully forwarded`, color:"text-green-400" },
+    { id:"aging", icon:"📅", title:"Aging Report (All MB Bags)", desc:"Day-by-day aging for all USA transit bags", color:"text-blue-400" },
+    { id:"mawbs", icon:"📋", title:"MAWB Summary", desc:`${mawbs.length} MAWBs, ${newMawbs.length} LHR→JFK assignments`, color:"text-purple-400" },
+  ];
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      {generated && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-300 text-sm">✓ Report exported successfully</div>}
+
+      {overdueCount>0 && (
+        <div className="bg-amber-500/8 border border-amber-500/30 rounded-xl p-4 text-amber-300 text-sm">
+          ⚠ <strong>{overdueCount} bags</strong> pending for more than 3 days — included in aging report
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4">
+        {reports.map(r => (
+          <div key={r.id} className={`bg-[#0f1629] border rounded-xl p-5 ${r.alert?"border-amber-500/30":"border-[#1e2d4a]"}`}>
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">{r.icon}</span>
+                <div>
+                  <h3 className={`font-semibold ${r.color}`}>{r.title}</h3>
+                  <p className="text-slate-500 text-sm mt-0.5">{r.desc}</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <Btn variant="amber" size="sm" onClick={()=>exportExcel(r.id)}>⬇ Export Excel (.xlsx)</Btn>
+              {(r.id==="pending"||r.id==="flown") && <Btn variant="ghost" size="sm" onClick={()=>exportCSV(r.id)}>⬇ Export CSV</Btn>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-5">
+        <h3 className="text-white font-semibold mb-4 text-sm">Quick Stats Summary</h3>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          {[
+            ["Total MAWBs (DEL→LHR)", mawbs.length],
+            ["Active MAWBs", mawbs.filter(m=>m.status==="active").length],
+            ["Completed MAWBs", mawbs.filter(m=>m.status==="completed").length],
+            ["New MAWBs (LHR→JFK)", newMawbs.length],
+            ["Total Bags Tracked", bags.length],
+            ["LHR Delivery Bags", bags.filter(b=>b.destinationType==="LHR").length],
+            ["USA Transit Bags", bags.filter(b=>b.destinationType==="USA").length],
+            ["Currently Pending LHR", pendingCount],
+            ["Forwarded to JFK", flownCount],
+            ["Overdue (>3 days)", overdueCount],
+          ].map(([k,v])=>(
+            <div key={k} className="flex items-center justify-between py-2 border-b border-[#0f1628]">
+              <span className="text-slate-400">{k}</span>
+              <span className="text-white font-semibold mono">{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─────────────────── ACTIVITY LOGS ─────────────────── */
+const ActivityLogs = ({ logs }) => {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(()=>logs.filter(l=>!search||l.action.toLowerCase().includes(search.toLowerCase())||l.details.toLowerCase().includes(search.toLowerCase())),[logs,search]);
+  const { page, setPage, total, slice } = usePaginate(filtered, 15);
+  const actionColors = { "MAWB Assigned":"text-purple-300", "Manifest Uploaded":"text-blue-300", "Bag Updated":"text-amber-300", "Login":"text-green-300" };
+  return (
+    <div className="space-y-5">
+      <div className="relative max-w-sm">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search logs…" className="w-full bg-[#0f1629] border border-[#1e2d4a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40"/>
+      </div>
+      <div className="space-y-2">
+        {slice.map(l=>(
+          <div key={l.id} className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl p-4 flex items-start gap-4 hover:bg-[#1a2644] transition-colors">
+            <div className="flex-shrink-0 mt-0.5">
+              <div className="w-2 h-2 rounded-full bg-amber-400 mt-2"/>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className={`font-semibold text-sm ${actionColors[l.action]||"text-slate-300"}`}>{l.action}</span>
+                <span className="text-slate-600 text-xs">by <span className="text-slate-400">{l.user}</span></span>
+              </div>
+              <p className="text-slate-400 text-sm mt-1 leading-relaxed">{l.details}</p>
+            </div>
+            <div className="text-slate-600 text-xs flex-shrink-0 whitespace-nowrap">{fmtDT(l.timestamp)}</div>
+          </div>
+        ))}
+        {slice.length===0&&<EmptyState icon="🕐" title="No logs found" sub="Activity will appear here"/>}
+      </div>
+      <Pagination page={page} total={total} setPage={setPage}/>
+    </div>
+  );
+};
+
+/* ─────────────────── MAIN LAYOUT ─────────────────── */
+const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activityLogs, addLog, currentUser, onLogout, darkMode, setDarkMode, onExportData, onImportData }) => {
+  const [page, setPage] = useState("dashboard");
+  const [collapsed, setCollapsed] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [selectedMawb, setSelectedMawb] = useState(null);
+  const [searchBag, setSearchBag] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+
+  return (
+    <div className={`flex h-screen overflow-hidden ${darkMode?"bg-[#080d1a]":"bg-slate-100"}`} style={{fontFamily:"Outfit,sans-serif"}}>
+      
+      <Sidebar page={page} setPage={p=>{setPage(p);if(p!=="mawbs")setSelectedMawb(null);}} collapsed={collapsed} user={currentUser} onLogout={onLogout} darkMode={darkMode} setDarkMode={setDarkMode} onExport={onExportData} onImport={()=>setShowImport(true)}/>
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <Topbar page={page} globalSearch={globalSearch} setGlobalSearch={setGlobalSearch} collapsed={collapsed} setCollapsed={setCollapsed}
+          bags={bags} mawbs={mawbs} newMawbs={newMawbs} setPage={setPage} setSelectedMawb={setSelectedMawb} setSearchBag={setSearchBag}/>
+        <main className="flex-1 overflow-y-auto p-6">
+          {page==="dashboard" && <Dashboard mawbs={mawbs} bags={bags} newMawbs={newMawbs} setPage={setPage} setSearchBag={setSearchBag}/>}
+          {page==="upload"    && <UploadManifest mawbs={mawbs} setMawbs={setMawbs} bags={bags} setBags={setBags} addLog={addLog}/>}
+          {page==="mawbs"     && <MAWBManagement mawbs={mawbs} bags={bags} setBags={setBags} newMawbs={newMawbs} selectedMawb={selectedMawb} setSelectedMawb={setSelectedMawb} addLog={addLog}/>}
+          {page==="pending"   && <PendingLHRBags bags={bags} mawbs={mawbs} newMawbs={newMawbs} setBags={setBags} addLog={addLog}/>}
+          {page==="assign"    && <AssignNewMAWB mawbs={mawbs} bags={bags} newMawbs={newMawbs} setNewMawbs={setNewMawbs} setBags={setBags} addLog={addLog}/>}
+          {page==="reports"   && <Reports mawbs={mawbs} bags={bags} newMawbs={newMawbs}/>}
+          {page==="logs"      && <ActivityLogs logs={activityLogs}/>}
+        </main>
+      </div>
+      {searchBag && <BagDetailModal bag={searchBag} mawbs={mawbs} newMawbs={newMawbs} onClose={()=>setSearchBag(null)}/>}
+      {showImport && <ImportModal onImport={onImportData} onClose={()=>setShowImport(false)}/>}
+    </div>
+  );
+};
+
+/* ─────────────────── ROOT ─────────────────── */
+const LS = {
+  get: (key, fallback) => {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch { return fallback; }
+  },
+  set: (key, val) => {
+    try { localStorage.setItem(key, JSON.stringify(val)); }
+    catch {}
+  },
+};
+
+function App() {
+  const [auth, setAuth]         = useState(false);
+  const [user, setUser]         = useState(null);
+  const [darkMode, setDarkMode] = useState(()  => LS.get('ct_dark',     true));
+  const [mawbs,    setMawbs]    = useState(()  => LS.get('ct_mawbs',    []));
+  const [newMawbs, setNewMawbs] = useState(()  => LS.get('ct_newmawbs', []));
+  const [logs,     setLogs]     = useState(()  => LS.get('ct_logs',     []));
+
+  /* ── ONE-TIME MIGRATION ──────────────────────────────────────────────
+     USA/MB bags imported before the status fix were saved with
+     "Arrived LHR". Correct them to "Pending at LHR" on startup.
+     Bags that are already Flown/Delivered/Assigned are left untouched.
+  ─────────────────────────────────────────────────────────────────── */
+  const [bags, setBags] = useState(() => {
+    const stored = LS.get('ct_bags', []);
+    const needsFix = stored.some(b => b.destinationType === "USA" && b.status === "Arrived LHR");
+    if (!needsFix) return stored;
+    const fixed = stored.map(b =>
+      b.destinationType === "USA" && b.status === "Arrived LHR"
+        ? { ...b, status: "Pending at LHR" }
+        : b
+    );
+    LS.set('ct_bags', fixed); // write fix to localStorage immediately
+    return fixed;
+  });
+
+  /* Sync every state slice to localStorage whenever it changes */
+  useEffect(() => { LS.set('ct_mawbs',    mawbs);    }, [mawbs]);
+  useEffect(() => { LS.set('ct_bags',     bags);     }, [bags]);
+  useEffect(() => { LS.set('ct_newmawbs', newMawbs); }, [newMawbs]);
+  useEffect(() => { LS.set('ct_logs',     logs);     }, [logs]);
+  useEffect(() => { LS.set('ct_dark',     darkMode); }, [darkMode]);
+
+  const addLog = useCallback((action, details) => {
+    setLogs(prev => [{
+      id: genId(),
+      timestamp: new Date().toISOString(),
+      action,
+      details,
+      user: user?.username || "admin"
+    }, ...prev]);
+  }, [user]);
+
+  const onExportData = () => exportData(mawbs, bags, newMawbs, logs);
+  const onImportData = d => {
+    const m=d.mawbs||[], b=d.bags||[], n=d.newMawbs||[], l=d.logs||[];
+    setMawbs(m); setBags(b); setNewMawbs(n); setLogs(l);
+    LS.set("ct_mawbs",m); LS.set("ct_bags",b); LS.set("ct_newmawbs",n); LS.set("ct_logs",l);
+  };
+
+  if (!auth) return <LoginPage onLogin={u => { setUser(u); setAuth(true); }} />;
+
+  return (
+    <MainApp
+      mawbs={mawbs}       setMawbs={setMawbs}
+      bags={bags}         setBags={setBags}
+      newMawbs={newMawbs} setNewMawbs={setNewMawbs}
+      activityLogs={logs} addLog={addLog}
+      currentUser={user}  onLogout={() => setAuth(false)}
+      darkMode={darkMode} setDarkMode={setDarkMode}
+      onExportData={onExportData} onImportData={onImportData}
+    />
+  );
+}
+
+
+    /* ═══════════════ MOUNT ═══════════════ */
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
