@@ -535,6 +535,10 @@ const Sidebar = ({ page, setPage, collapsed, user, onLogout, darkMode, setDarkMo
         ))}
       </nav>
       <div className="p-3 border-t border-[#0f1828] space-y-2">
+        <button onClick={onCloudSetup} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl transition-all hover:bg-[#0f1629]" style={{color: cloudOk ? "#34d399" : "#f59e0b"}}>
+          <span className="text-base">{cloudOk ? "⛅" : "☁️"}</span>
+          {!collapsed && <span className="text-xs font-medium">{cloudOk ? "Cloud Sync ✓" : "Setup Cloud Sync"}</span>}
+        </button>
         <button onClick={onExport} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-green-400 hover:bg-green-500/10 transition-all">
           <span className="text-base">💾</span>
           {!collapsed && <span className="text-xs font-medium">Export Backup</span>}
@@ -1885,7 +1889,7 @@ function App() {
       activityLogs={logs} addLog={addLog}
       currentUser={user}  onLogout={() => setAuth(false)}
       darkMode={darkMode} setDarkMode={setDarkMode}
-      onExportData={onExportData} onImportData={onImportData} onCloudSave={onCloudSave} onCloudSetup={()=>{}}
+      onExportData={onExportData} onImportData={onImportData} onCloudSave={onCloudSave} onCloudSetup={()=>setShowCloudSetup(true)}
     />
   );
 }
