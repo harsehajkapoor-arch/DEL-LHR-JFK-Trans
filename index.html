@@ -1,4 +1,4 @@
-=<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1703,6 +1703,7 @@ const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activi
   const [showImport, setShowImport] = useState(false);
   const [cloudOk, setCloudOk] = useState(isCloudReady());
   const [syncStatus, setSyncStatus] = useState(null);
+  const [showCloudBanner, setShowCloudBanner] = useState(!Cloud.ok());
 
   return (
     <div className={`flex h-screen overflow-hidden ${darkMode?"bg-[#080d1a]":"bg-slate-100"}`} style={{fontFamily:"Outfit,sans-serif"}}>
