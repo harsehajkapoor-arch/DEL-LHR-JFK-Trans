@@ -1726,7 +1726,7 @@ const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activi
       {showCloudBanner && !isCloudReady() && (
         <CloudSetupBanner onDismiss={()=>setShowCloudBanner(false)}/>
       )}
-      {showImport && <ImportModal onImport={d=>{onImportData(d);if(isCloudReady()){setSyncStatus("saving");CloudDB.save(d.mawbs||[],d.bags||[],d.newMawbs||[],d.logs||[]).then(r=>{setSyncStatus(r.ok?"saved":"error");setTimeout(()=>setSyncStatus(null),3000);});};}} onClose={()=>setShowImport(false)}/>}
+      {showImport && <ImportModal onImport={d=>{onImportData(d);if(isCloudReady()){setSyncStatus("saving");CloudDB.save({mawbs:d.mawbs||[], bags:d.bags||[], newMawbs:d.newMawbs||[], logs:d.logs||[]}).then(r=>{setSyncStatus(r.ok?"saved":"error");setTimeout(()=>setSyncStatus(null),3000);});};}} onClose={()=>setShowImport(false)}/>}
     </div>
   );
 };
@@ -1798,19 +1798,26 @@ function App() {
   const onCloudSave = useCallback((m,b,n,l) => {
     if (!isCloudReady()) return;
     if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
-    cloudSaveTimer.current = setTimeout(() => { CloudDB.save(m,b,n,l); }, 2000);
+    cloudSaveTimer.current = setTimeout(() => { CloudDB.save({mawbs:m, bags:b, newMawbs:n, logs:l}); }, 2000);
   }, []);
 
   useEffect(() => { onCloudSave(mawbs,bags,newMawbs,logs); }, [mawbs,bags,newMawbs,logs]);
 
-  // On first load: if cloud configured and localStorage empty, load from cloud
+  // On first load: load from cloud OR save existing data to cloud
   useEffect(() => {
     if (!isCloudReady()) return;
-    if (bags.length===0 && mawbs.length===0) {
+    if (bags.length === 0 && mawbs.length === 0) {
+      // No local data — load from cloud (incognito, new browser)
       CloudDB.load().then(d => {
         if (d?.bags?.length || d?.mawbs?.length) {
           onImportData(d);
+          console.log("✓ Loaded " + d.bags.length + " bags from cloud");
         }
+      });
+    } else {
+      // Has local data — immediately save to cloud so other browsers get it
+      CloudDB.save({ mawbs, bags, newMawbs, logs }).then(r => {
+        console.log(r.ok ? "✓ Data synced to cloud on startup" : "✗ Cloud save failed: " + r.err);
       });
     }
   }, []);
