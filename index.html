@@ -1703,7 +1703,7 @@ const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activi
   const [showImport, setShowImport] = useState(false);
   const [cloudOk, setCloudOk] = useState(isCloudReady());
   const [syncStatus, setSyncStatus] = useState(null);
-  const [showCloudBanner, setShowCloudBanner] = useState(!Cloud.ok());
+  const [showCloudBanner, setShowCloudBanner] = useState(!isCloudReady());
 
   return (
     <div className={`flex h-screen overflow-hidden ${darkMode?"bg-[#080d1a]":"bg-slate-100"}`} style={{fontFamily:"Outfit,sans-serif"}}>
@@ -1711,7 +1711,7 @@ const MainApp = ({ mawbs, setMawbs, bags, setBags, newMawbs, setNewMawbs, activi
       <Sidebar page={page} setPage={p=>{setPage(p);if(p!=="mawbs")setSelectedMawb(null);}} collapsed={collapsed} user={currentUser} onLogout={onLogout} darkMode={darkMode} setDarkMode={setDarkMode} onExport={onExportData} onImport={()=>setShowImport(true)} cloudOk={cloudOk}/>
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Topbar page={page} globalSearch={globalSearch} setGlobalSearch={setGlobalSearch} collapsed={collapsed} setCollapsed={setCollapsed}
-          bags={bags} mawbs={mawbs} newMawbs={newMawbs} setPage={setPage} setSelectedMawb={setSelectedMawb} setSearchBag={setSearchBag}/>
+          bags={bags} mawbs={mawbs} newMawbs={newMawbs} setPage={setPage} setSelectedMawb={setSelectedMawb} setSearchBag={setSearchBag} syncStatus={syncStatus}/>
         <main className="flex-1 overflow-y-auto p-6">
           {page==="dashboard" && <Dashboard mawbs={mawbs} bags={bags} newMawbs={newMawbs} setPage={setPage} setSearchBag={setSearchBag} onImportClick={()=>setShowImport(true)}/>}
           {page==="upload"    && <UploadManifest mawbs={mawbs} setMawbs={setMawbs} bags={bags} setBags={setBags} addLog={addLog}/>}
