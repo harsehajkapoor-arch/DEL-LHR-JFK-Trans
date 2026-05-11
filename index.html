@@ -1528,11 +1528,7 @@ const AssignNewMAWB = ({ mawbs, bags, newMawbs, setNewMawbs, setBags, addLog }) 
               <div>
                 <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Bag Numbers (one per line or comma separated)</label>
                 <textarea rows={8} value={bagInput} onChange={e=>setBagInput(e.target.value)}
-                  placeholder={"MB00087530
-MB00087531
-MB00087532
-MB00087584
-..."}
+                  placeholder={"MB00087530\nMB00087531\nMB00087532\nMB00087584\n..."}
                   className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm mono resize-none"/>
               </div>
               <div className="flex items-center gap-3">
