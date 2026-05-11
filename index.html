@@ -150,8 +150,8 @@
        6. Save the file & re-upload to GitHub Pages
        ════════════════════════════════════════════════════════════ */
 
-    const JSONBIN_KEY   = "$2a$10$THBljehWtps5dwfS7yV18uLzPDItCmPTLOlP807MIrgvC1m7Auigi";   // ← replace this
-    const JSONBIN_BIN   = "69fdb684c0954111d8f41582";               // ← replace this
+    const JSONBIN_KEY   = "YOUR_JSONBIN_SECRET_KEY";   // ← replace this
+    const JSONBIN_BIN   = "YOUR_BIN_ID";               // ← replace this
 
     const isCloudReady = () =>
       JSONBIN_KEY !== "YOUR_JSONBIN_SECRET_KEY" &&
@@ -1390,6 +1390,7 @@ const PendingLHRBags = ({ bags, mawbs, newMawbs, setBags, addLog }) => {
 
 /* ─────────────────── ASSIGN NEW MAWB ─────────────────── */
 const AssignNewMAWB = ({ mawbs, bags, newMawbs, setNewMawbs, setBags, addLog }) => {
+  const [mode, setMode] = useState("standard"); // "standard" | "byBags"
   const [step, setStep] = useState(1);
   const [selectedOrigMawb, setSelectedOrigMawb] = useState("");
   const [selectedBags, setSelectedBags] = useState([]);
@@ -1397,141 +1398,362 @@ const AssignNewMAWB = ({ mawbs, bags, newMawbs, setNewMawbs, setBags, addLog }) 
   const [done, setDone] = useState(null);
   const [search, setSearch] = useState("");
 
+  // ── BY BAG NUMBERS MODE ──
+  const [bagInput, setBagInput] = useState("");
+  const [lookupResults, setLookupResults] = useState(null);
+  const [byBagSelected, setByBagSelected] = useState([]);
+  const fileRef = useRef();
+
   const pendingBags = useMemo(()=>{
     if (!selectedOrigMawb) return [];
     return bags.filter(b=>b.originalMawbId===selectedOrigMawb&&b.destinationType==="USA"&&["Pending at LHR","Arrived LHR"].includes(b.status));
   },[selectedOrigMawb,bags]);
 
   const filteredPending = useMemo(()=>pendingBags.filter(b=>!search||b.bagNumber.toUpperCase().includes(search.toUpperCase())),[pendingBags,search]);
-
   const toggleBag = id => setSelectedBags(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const selectAll = () => setSelectedBags(selectedBags.length===filteredPending.length?[]:filteredPending.map(b=>b.id));
 
-  const assign = () => {
-    if (!newMawbForm.mawbNumber||selectedBags.length===0) return;
-    const existingNm = newMawbs.find(n=>n.mawbNumber===newMawbForm.mawbNumber&&n.originalMawbId===selectedOrigMawb);
-    if (existingNm) { alert("This MAWB number is already assigned to this same original MAWB. Choose a different MAWB number or select a different original MAWB."); return; }
-    const nm = { id:genId(), ...newMawbForm, originalMawbId:selectedOrigMawb, route:"LHR→JFK", bagIds:selectedBags, createdAt:new Date().toISOString() };
-    setNewMawbs(p=>[nm,...p]);
-    setBags(prev=>prev.map(b=>selectedBags.includes(b.id)?{...b,status:"Flown to JFK",newMawbId:nm.id}:b));
-    const m = mawbs.find(x=>x.id===selectedOrigMawb);
-    const bagNums = bags.filter(b=>selectedBags.includes(b.id)).map(b=>b.bagNumber).join(", ");
-    addLog("MAWB Assigned",`New MAWB ${nm.mawbNumber} assigned to ${selectedBags.length} bags: ${bagNums}. Airline: ${nm.airline} ${nm.flightNumber}`);
-    setDone({ nm, count:selectedBags.length, bagNums, origMawb:m?.mawbNumber });
-    setStep(1); setSelectedOrigMawb(""); setSelectedBags([]); setNewMawbForm({mawbNumber:"",airline:"",flightNumber:"",flightDate:""});
+  // Lookup bag numbers
+  const lookupBags = () => {
+    const nums = [...new Set(bagInput.split(/[
+,;]+/).map(b=>b.trim().toUpperCase()).filter(Boolean))];
+    if (!nums.length) return;
+    const results = nums.map(num => {
+      const bag = bags.find(b=>b.bagNumber.toUpperCase()===num);
+      if (!bag) return { num, found:false };
+      const mawb = mawbs.find(m=>m.id===bag.originalMawbId);
+      const eligible = bag.destinationType==="USA" && ["Pending at LHR","Arrived LHR"].includes(bag.status);
+      return { num, found:true, bag, mawb, eligible };
+    });
+    setLookupResults(results);
+    // Auto-select all eligible bags
+    setByBagSelected(results.filter(r=>r.found&&r.eligible).map(r=>r.bag.id));
   };
 
+  const handleBagFile = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => {
+      // Try to extract bag numbers from CSV/TXT
+      const text = ev.target.result;
+      const nums = [...new Set(
+        text.split(/[
+,;	]+/)
+          .map(b=>b.trim().toUpperCase())
+          .filter(b=>/^(MB|8)\w+/.test(b))
+      )];
+      setBagInput(nums.join('
+'));
+    };
+    r.readAsText(f);
+  };
+
+  const toggleByBag = id => setByBagSelected(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+
+  const assign = () => {
+    const bags2assign = mode==="byBags" ? byBagSelected : selectedBags;
+    if (!newMawbForm.mawbNumber || bags2assign.length===0) return;
+    const existingNm = newMawbs.find(n=>n.mawbNumber===newMawbForm.mawbNumber);
+    if (existingNm && mode!=="byBags") {
+      const sameOrig = newMawbs.find(n=>n.mawbNumber===newMawbForm.mawbNumber&&n.originalMawbId===selectedOrigMawb);
+      if (sameOrig) { alert("This MAWB is already assigned to this original MAWB."); return; }
+    }
+    // For byBags mode, group by original MAWB (create one new MAWB entry per orig MAWB if needed)
+    // But we just create one entry linked to null (cross-MAWB)
+    const nm = {
+      id:genId(), ...newMawbForm,
+      originalMawbId: mode==="byBags" ? (lookupResults?.find(r=>r.bag?.id===bags2assign[0])?.mawb?.id||null) : selectedOrigMawb,
+      route:"LHR→JFK", bagIds:bags2assign, createdAt:new Date().toISOString()
+    };
+    setNewMawbs(p=>[nm,...p]);
+    setBags(prev=>prev.map(b=>bags2assign.includes(b.id)?{...b,status:"Flown to JFK",newMawbId:nm.id}:b));
+    const bagNums = bags.filter(b=>bags2assign.includes(b.id)).map(b=>b.bagNumber).join(", ");
+    addLog("MAWB Assigned",`New MAWB ${nm.mawbNumber} assigned to ${bags2assign.length} bags: ${bagNums}. Airline: ${nm.airline} ${nm.flightNumber}`);
+    setDone({ nm, count:bags2assign.length, bagNums });
+    // Reset
+    setStep(1); setSelectedOrigMawb(""); setSelectedBags([]);
+    setNewMawbForm({mawbNumber:"",airline:"",flightNumber:"",flightDate:""});
+    setLookupResults(null); setBagInput(""); setByBagSelected([]);
+  };
+
+  // Grouped results by MAWB for display
+  const groupedResults = useMemo(()=>{
+    if (!lookupResults) return [];
+    const map = {};
+    lookupResults.filter(r=>r.found).forEach(r=>{
+      const key = r.mawb?.id||"unknown";
+      if (!map[key]) map[key] = { mawb:r.mawb, bags:[] };
+      map[key].bags.push(r);
+    });
+    return Object.values(map);
+  },[lookupResults]);
+
+  const notFound = lookupResults?.filter(r=>!r.found)||[];
+  const ineligible = lookupResults?.filter(r=>r.found&&!r.eligible)||[];
+
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-5">
       {done && (
         <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
-          <p className="text-green-300 font-semibold">✓ MAWB {done.nm.mawbNumber} assigned successfully</p>
-          <p className="text-green-400/70 text-sm mt-1">{done.count} bags marked as "Flown to JFK" · Original: {done.origMawb}</p>
+          <p className="text-green-300 font-semibold">✓ MAWB {done.nm.mawbNumber} assigned to {done.count} bags</p>
+          <p className="text-green-400/70 text-sm mt-1 font-mono text-xs">{done.bagNums}</p>
           <button onClick={()=>setDone(null)} className="text-green-400/50 text-xs mt-2 hover:text-green-400">Dismiss</button>
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        {[{n:1,l:"Select Original MAWB"},{n:2,l:"Select Bags"},{n:3,l:"New MAWB Details"}].map(s=>(
-          <div key={s.n} className="flex items-center gap-2">
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${step>=s.n?"bg-amber-500 text-black":"bg-[#1e2d4a] text-slate-500"}`}>{s.n}</div>
-            <span className={`text-sm ${step===s.n?"text-white":"text-slate-500"}`}>{s.l}</span>
-            {s.n<3&&<span className="text-slate-600 mx-1">›</span>}
+      {/* MODE SELECTOR */}
+      <div className="flex gap-3">
+        <button onClick={()=>{setMode("standard");setStep(1);setLookupResults(null);setBagInput("");}}
+          className={`flex-1 flex items-center gap-3 p-4 rounded-xl border text-left transition-all ${mode==="standard"?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] bg-[#0f1629] hover:border-slate-600"}`}>
+          <span className="text-2xl">📋</span>
+          <div>
+            <p className={`font-semibold text-sm ${mode==="standard"?"text-amber-300":"text-white"}`}>Standard Mode</p>
+            <p className="text-slate-500 text-xs mt-0.5">Select MAWB first, then choose bags</p>
           </div>
-        ))}
+        </button>
+        <button onClick={()=>{setMode("byBags");setStep(1);setSelectedBags([]);setSelectedOrigMawb("");}}
+          className={`flex-1 flex items-center gap-3 p-4 rounded-xl border text-left transition-all ${mode==="byBags"?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] bg-[#0f1629] hover:border-slate-600"}`}>
+          <span className="text-2xl">🏷</span>
+          <div>
+            <p className={`font-semibold text-sm ${mode==="byBags"?"text-amber-300":"text-white"}`}>Search by Bag Numbers</p>
+            <p className="text-slate-500 text-xs mt-0.5">Paste bag numbers → auto-find MAWBs</p>
+          </div>
+        </button>
       </div>
 
-      {step===1 && (
-        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
-          <h3 className="text-white font-semibold">Select the Original DEL→LHR MAWB</h3>
-          <p className="text-slate-500 text-sm">Choose the MAWB that contains pending MB bags in LHR</p>
-          <div className="space-y-2 max-h-72 overflow-y-auto">
-            {mawbs.filter(m=>m.status==="active").map(m=>{
-              const pending = bags.filter(b=>b.originalMawbId===m.id&&b.destinationType==="USA"&&["Pending at LHR","Arrived LHR"].includes(b.status)).length;
-              return (
-                <button key={m.id} onClick={()=>{setSelectedOrigMawb(m.id);setStep(2);}}
-                  className={`w-full flex items-center gap-4 p-4 rounded-xl border text-left transition-all ${selectedOrigMawb===m.id?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] hover:border-slate-600 bg-[#080d1a]"}`}>
-                  <div className="flex-1">
-                    <p className="text-white font-semibold mono">{m.mawbNumber}</p>
-                    <p className="text-slate-500 text-xs mt-0.5">{m.airline} · {m.flightNumber} · Arrived {fmtDate(m.arrivalDate)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-bold text-lg mono ${pending>0?"text-amber-400":"text-slate-600"}`}>{pending}</p>
-                    <p className="text-slate-500 text-xs">pending bags</p>
-                  </div>
-                  {pending===0&&<span className="text-slate-600 text-sm">No pending bags</span>}
+      {/* ══════════ BY BAG NUMBERS MODE ══════════ */}
+      {mode==="byBags" && (
+        <div className="space-y-4">
+          {!lookupResults ? (
+            <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+              <h3 className="text-white font-semibold">Enter MB Bag Numbers</h3>
+              <p className="text-slate-500 text-sm">Paste your bag numbers below. The system will automatically find which MAWB each bag came from.</p>
+              <div>
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1.5">Bag Numbers (one per line or comma separated)</label>
+                <textarea rows={8} value={bagInput} onChange={e=>setBagInput(e.target.value)}
+                  placeholder={"MB00087530
+MB00087531
+MB00087532
+MB00087584
+..."}
+                  className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg px-3 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm mono resize-none"/>
+              </div>
+              <div className="flex items-center gap-3">
+                <Btn onClick={lookupBags} disabled={!bagInput.trim()}>🔍 Find MAWBs for these bags</Btn>
+                <span className="text-slate-500 text-sm">or</span>
+                <button onClick={()=>fileRef.current.click()} className="text-amber-400 hover:text-amber-300 text-sm underline">
+                  Upload CSV/TXT file
                 </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {step===2 && (
-        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-white font-semibold">Select Pending MB Bags</h3>
-            <Btn variant="ghost" size="sm" onClick={()=>setStep(1)}>← Change MAWB</Btn>
-          </div>
-          <div className="bg-[#080d1a] rounded-xl p-3 text-sm">
-            <span className="text-slate-400">Original MAWB: </span><span className="text-white font-semibold mono">{mawbs.find(m=>m.id===selectedOrigMawb)?.mawbNumber}</span>
-            <span className="text-slate-600 mx-3">·</span>
-            <span className="text-amber-400 font-semibold">{pendingBags.length}</span><span className="text-slate-400"> pending bags available</span>
-          </div>
-          <div className="flex gap-3">
-            <div className="relative flex-1">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter bags…" className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40"/>
+                <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx" onChange={handleBagFile} className="hidden"/>
+              </div>
             </div>
-            <Btn variant="ghost" size="sm" onClick={selectAll}>{selectedBags.length===filteredPending.length&&filteredPending.length>0?"Deselect All":"Select All"}</Btn>
-          </div>
-          {pendingBags.length===0 ? (
-            <EmptyState icon="✅" title="No pending bags for this MAWB" sub="All MB bags have been assigned or forwarded"/>
           ) : (
-            <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
-              {filteredPending.map(b => {
-                const days=daysSince(b.arrivalDate), sel=selectedBags.includes(b.id);
-                return (
-                  <button key={b.id} onClick={()=>toggleBag(b.id)}
-                    className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${sel?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] hover:border-slate-600 bg-[#080d1a]"}`}>
-                    <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border ${sel?"bg-amber-500 border-amber-500":"border-[#2e3f5a]"}`}>
-                      {sel&&<span className="text-black text-xs font-bold">✓</span>}
-                    </div>
+            <div className="space-y-4">
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-center">
+                  <p className="text-2xl font-bold text-green-400 mono">{lookupResults.filter(r=>r.found&&r.eligible).length}</p>
+                  <p className="text-green-300 text-xs mt-1">Ready to assign</p>
+                </div>
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-center">
+                  <p className="text-2xl font-bold text-amber-400 mono">{ineligible.length}</p>
+                  <p className="text-amber-300 text-xs mt-1">Already assigned/flown</p>
+                </div>
+                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-center">
+                  <p className="text-2xl font-bold text-red-400 mono">{notFound.length}</p>
+                  <p className="text-red-300 text-xs mt-1">Not found in system</p>
+                </div>
+              </div>
+
+              {/* Not found list */}
+              {notFound.length > 0 && (
+                <div className="bg-red-500/8 border border-red-500/30 rounded-xl p-3">
+                  <p className="text-red-300 text-xs font-semibold mb-2">⚠ Bag numbers not found in system:</p>
+                  <div className="flex flex-wrap gap-1">
+                    {notFound.map(r=><span key={r.num} className="mono text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded">{r.num}</span>)}
+                  </div>
+                </div>
+              )}
+
+              {/* Ineligible list */}
+              {ineligible.length > 0 && (
+                <div className="bg-amber-500/8 border border-amber-500/30 rounded-xl p-3">
+                  <p className="text-amber-300 text-xs font-semibold mb-2">Already flown/delivered — skipped:</p>
+                  <div className="flex flex-wrap gap-1">
+                    {ineligible.map(r=><span key={r.num} className="mono text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded">{r.bag.bagNumber} ({r.bag.status})</span>)}
+                  </div>
+                </div>
+              )}
+
+              {/* Grouped by MAWB */}
+              {groupedResults.map(group => (
+                <div key={group.mawb?.id||"x"} className="bg-[#0f1629] border border-[#1e2d4a] rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 bg-[#080d1a] border-b border-[#1e2d4a]">
                     <div>
-                      <p className="text-white text-sm font-semibold mono">{b.bagNumber}</p>
-                      <p className={`text-xs ${days>3?"text-amber-400":"text-slate-500"}`}>{days}d in LHR{days>3?" ⚠":""}</p>
+                      <p className="text-white font-semibold mono text-sm">{group.mawb?.mawbNumber||"Unknown MAWB"}</p>
+                      <p className="text-slate-500 text-xs">{group.mawb?.airline||""} · Arrived {fmtDate(group.mawb?.arrivalDate)}</p>
                     </div>
-                  </button>
-                );
-              })}
+                    <span className="text-slate-400 text-xs">{group.bags.filter(r=>r.eligible).length} eligible bags</span>
+                  </div>
+                  <div className="p-3 flex flex-wrap gap-2">
+                    {group.bags.map(r=>{
+                      const sel = byBagSelected.includes(r.bag.id);
+                      return (
+                        <button key={r.bag.id} onClick={()=>r.eligible&&toggleByBag(r.bag.id)}
+                          disabled={!r.eligible}
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium mono transition-all ${
+                            !r.eligible?"border-slate-700 bg-slate-800/50 text-slate-600 cursor-not-allowed":
+                            sel?"border-amber-500/60 bg-amber-500/15 text-amber-300":"border-[#1e2d4a] bg-[#080d1a] text-slate-300 hover:border-amber-500/40"
+                          }`}>
+                          {r.eligible&&<span>{sel?"✓":""}</span>}
+                          {r.bag.bagNumber}
+                          {!r.eligible&&<span className="text-slate-600 ml-1">({r.bag.status.split(" ")[0]})</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <div className="flex gap-3 items-center">
+                <Btn variant="ghost" onClick={()=>{setLookupResults(null);setBagInput("");}}>← Search Again</Btn>
+                <span className="text-slate-500 text-sm">{byBagSelected.length} bags selected</span>
+                <Btn disabled={byBagSelected.length===0} onClick={()=>setStep(2)}>
+                  Assign New MAWB to {byBagSelected.length} bags →
+                </Btn>
+              </div>
             </div>
           )}
-          <div className="flex gap-3">
-            <Btn disabled={selectedBags.length===0} onClick={()=>setStep(3)}>Next: New MAWB Details ({selectedBags.length} bags) →</Btn>
-          </div>
+
+          {/* Step 2: New MAWB form for byBags mode */}
+          {step===2 && lookupResults && (
+            <div className="bg-[#0f1629] border border-amber-500/30 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-semibold">New LHR→JFK MAWB Details</h3>
+                <Btn variant="ghost" size="sm" onClick={()=>setStep(1)}>← Back</Btn>
+              </div>
+              <div className="bg-[#080d1a] rounded-xl p-3 text-sm">
+                <span className="text-slate-400">Assigning new MAWB to </span>
+                <span className="text-amber-400 font-bold">{byBagSelected.length} bags</span>
+                <span className="text-slate-400"> from </span>
+                <span className="text-white">{[...new Set(lookupResults.filter(r=>byBagSelected.includes(r.bag?.id)).map(r=>r.mawb?.mawbNumber).filter(Boolean))].join(", ") || "multiple MAWBs"}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                {bags.filter(b=>byBagSelected.includes(b.id)).map(b=><span key={b.id} className="mono text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded">{b.bagNumber}</span>)}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2"><Input label="New MAWB Number (LHR→JFK)" placeholder="176-99998888" value={newMawbForm.mawbNumber} onChange={e=>setNewMawbForm(f=>({...f,mawbNumber:e.target.value}))}/></div>
+                <Input label="Airline" placeholder="American Airlines" value={newMawbForm.airline} onChange={e=>setNewMawbForm(f=>({...f,airline:e.target.value}))}/>
+                <Input label="Flight Number" placeholder="AA-101" value={newMawbForm.flightNumber} onChange={e=>setNewMawbForm(f=>({...f,flightNumber:e.target.value}))}/>
+                <div className="col-span-2"><Input label="Flight Date (LHR→JFK)" type="date" value={newMawbForm.flightDate} onChange={e=>setNewMawbForm(f=>({...f,flightDate:e.target.value}))}/></div>
+              </div>
+              <Btn onClick={assign} disabled={!newMawbForm.mawbNumber||byBagSelected.length===0}>
+                ✓ Assign MAWB & Mark {byBagSelected.length} bags as Flown to JFK
+              </Btn>
+            </div>
+          )}
         </div>
       )}
 
-      {step===3 && (
-        <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-white font-semibold">New LHR→JFK MAWB Details</h3>
-            <Btn variant="ghost" size="sm" onClick={()=>setStep(2)}>← Back</Btn>
+      {/* ══════════ STANDARD MODE ══════════ */}
+      {mode==="standard" && (
+        <div className="space-y-5">
+          <div className="flex items-center gap-3">
+            {[{n:1,l:"Select Original MAWB"},{n:2,l:"Select Bags"},{n:3,l:"New MAWB Details"}].map(s=>(
+              <div key={s.n} className="flex items-center gap-2">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${step>=s.n?"bg-amber-500 text-black":"bg-[#1e2d4a] text-slate-500"}`}>{s.n}</div>
+                <span className={`text-sm ${step===s.n?"text-white":"text-slate-500"}`}>{s.l}</span>
+                {s.n<3&&<span className="text-slate-600 mx-1">›</span>}
+              </div>
+            ))}
           </div>
-          <div className="bg-[#080d1a] rounded-xl p-3 flex flex-wrap gap-3 text-sm">
-            <div><span className="text-slate-500">Bags selected: </span><span className="text-amber-400 font-bold">{selectedBags.length}</span></div>
-            <div><span className="text-slate-500">Original MAWB: </span><span className="text-white mono">{mawbs.find(m=>m.id===selectedOrigMawb)?.mawbNumber}</span></div>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {bags.filter(b=>selectedBags.includes(b.id)).map(b=><span key={b.id} className="mono text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded">{b.bagNumber}</span>)}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2"><Input label="New MAWB Number (LHR→JFK)" placeholder="176-99998888" value={newMawbForm.mawbNumber} onChange={e=>setNewMawbForm(f=>({...f,mawbNumber:e.target.value}))}/></div>
-            <Input label="Airline" placeholder="American Airlines" value={newMawbForm.airline} onChange={e=>setNewMawbForm(f=>({...f,airline:e.target.value}))}/>
-            <Input label="Flight Number" placeholder="AA-101" value={newMawbForm.flightNumber} onChange={e=>setNewMawbForm(f=>({...f,flightNumber:e.target.value}))}/>
-            <div className="col-span-2"><Input label="Flight Date (LHR→JFK)" type="date" value={newMawbForm.flightDate} onChange={e=>setNewMawbForm(f=>({...f,flightDate:e.target.value}))}/></div>
-          </div>
-          <Btn onClick={assign} disabled={!newMawbForm.mawbNumber||selectedBags.length===0}>✓ Assign MAWB & Mark as Flown to JFK</Btn>
+
+          {step===1 && (
+            <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+              <h3 className="text-white font-semibold">Select the Original DEL→LHR MAWB</h3>
+              <p className="text-slate-500 text-sm">Choose the MAWB that contains pending MB bags in LHR</p>
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {mawbs.filter(m=>m.status==="active").map(m=>{
+                  const pending = bags.filter(b=>b.originalMawbId===m.id&&b.destinationType==="USA"&&["Pending at LHR","Arrived LHR"].includes(b.status)).length;
+                  return (
+                    <button key={m.id} onClick={()=>{setSelectedOrigMawb(m.id);setStep(2);}}
+                      className={`w-full flex items-center gap-4 p-4 rounded-xl border text-left transition-all ${selectedOrigMawb===m.id?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] hover:border-slate-600 bg-[#080d1a]"}`}>
+                      <div className="flex-1">
+                        <p className="text-white font-semibold mono">{m.mawbNumber}</p>
+                        <p className="text-slate-500 text-xs mt-0.5">{m.airline} · {m.flightNumber} · Arrived {fmtDate(m.arrivalDate)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`font-bold text-lg mono ${pending>0?"text-amber-400":"text-slate-600"}`}>{pending}</p>
+                        <p className="text-slate-500 text-xs">pending bags</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {step===2 && (
+            <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-semibold">Select Pending MB Bags</h3>
+                <Btn variant="ghost" size="sm" onClick={()=>setStep(1)}>← Change MAWB</Btn>
+              </div>
+              <div className="bg-[#080d1a] rounded-xl p-3 text-sm">
+                <span className="text-slate-400">Original MAWB: </span><span className="text-white font-semibold mono">{mawbs.find(m=>m.id===selectedOrigMawb)?.mawbNumber}</span>
+                <span className="text-slate-600 mx-3">·</span>
+                <span className="text-amber-400 font-semibold">{pendingBags.length}</span><span className="text-slate-400"> pending bags available</span>
+              </div>
+              <div className="flex gap-3">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter bags…" className="w-full bg-[#080d1a] border border-[#1e2d4a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/40"/>
+                </div>
+                <Btn variant="ghost" size="sm" onClick={selectAll}>{selectedBags.length===filteredPending.length&&filteredPending.length>0?"Deselect All":"Select All"}</Btn>
+              </div>
+              {pendingBags.length===0 ? (
+                <EmptyState icon="✅" title="No pending bags for this MAWB" sub="All MB bags have been assigned or forwarded"/>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+                  {filteredPending.map(b => {
+                    const days=daysSince(b.arrivalDate), sel=selectedBags.includes(b.id);
+                    return (
+                      <button key={b.id} onClick={()=>toggleBag(b.id)}
+                        className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${sel?"border-amber-500/50 bg-amber-500/10":"border-[#1e2d4a] hover:border-slate-600 bg-[#080d1a]"}`}>
+                        <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border ${sel?"bg-amber-500 border-amber-500":"border-[#2e3f5a]"}`}>
+                          {sel&&<span className="text-black text-xs font-bold">✓</span>}
+                        </div>
+                        <div>
+                          <p className="text-white text-sm font-semibold mono">{b.bagNumber}</p>
+                          <p className={`text-xs ${days>3?"text-amber-400":"text-slate-500"}`}>{days}d{days>3?" ⚠":""}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <Btn disabled={selectedBags.length===0} onClick={()=>setStep(3)}>Next: New MAWB Details ({selectedBags.length} bags) →</Btn>
+            </div>
+          )}
+
+          {step===3 && (
+            <div className="bg-[#0f1629] border border-[#1e2d4a] rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-semibold">New LHR→JFK MAWB Details</h3>
+                <Btn variant="ghost" size="sm" onClick={()=>setStep(2)}>← Back</Btn>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {bags.filter(b=>selectedBags.includes(b.id)).map(b=><span key={b.id} className="mono text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded">{b.bagNumber}</span>)}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2"><Input label="New MAWB Number (LHR→JFK)" placeholder="176-99998888" value={newMawbForm.mawbNumber} onChange={e=>setNewMawbForm(f=>({...f,mawbNumber:e.target.value}))}/></div>
+                <Input label="Airline" placeholder="American Airlines" value={newMawbForm.airline} onChange={e=>setNewMawbForm(f=>({...f,airline:e.target.value}))}/>
+                <Input label="Flight Number" placeholder="AA-101" value={newMawbForm.flightNumber} onChange={e=>setNewMawbForm(f=>({...f,flightNumber:e.target.value}))}/>
+                <div className="col-span-2"><Input label="Flight Date (LHR→JFK)" type="date" value={newMawbForm.flightDate} onChange={e=>setNewMawbForm(f=>({...f,flightDate:e.target.value}))}/></div>
+              </div>
+              <Btn onClick={assign} disabled={!newMawbForm.mawbNumber||selectedBags.length===0}>✓ Assign MAWB & Mark as Flown to JFK</Btn>
+            </div>
+          )}
         </div>
       )}
     </div>
