@@ -1415,8 +1415,7 @@ const AssignNewMAWB = ({ mawbs, bags, newMawbs, setNewMawbs, setBags, addLog }) 
 
   // Lookup bag numbers
   const lookupBags = () => {
-    const nums = [...new Set(bagInput.split(/[
-,;]+/).map(b=>b.trim().toUpperCase()).filter(Boolean))];
+    const nums = [...new Set(bagInput.split(/[\n\r,;\t]+/).map(b=>b.trim().toUpperCase()).filter(Boolean))];
     if (!nums.length) return;
     const results = nums.map(num => {
       const bag = bags.find(b=>b.bagNumber.toUpperCase()===num);
@@ -1437,13 +1436,11 @@ const AssignNewMAWB = ({ mawbs, bags, newMawbs, setNewMawbs, setBags, addLog }) 
       // Try to extract bag numbers from CSV/TXT
       const text = ev.target.result;
       const nums = [...new Set(
-        text.split(/[
-,;	]+/)
+        text.split(/[\n\r,;\t]+/)
           .map(b=>b.trim().toUpperCase())
-          .filter(b=>/^(MB|8)\w+/.test(b))
+          .filter(b=>/^(MB|8)[A-Z0-9]+$/i.test(b))
       )];
-      setBagInput(nums.join('
-'));
+      setBagInput(nums.join('\n'));
     };
     r.readAsText(f);
   };
